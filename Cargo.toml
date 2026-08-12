@@ -1,0 +1,15 @@
+[package]
+name = "autoruns"
+version = "0.1.0"
+edition = "2021"
+description = "List Linux autorun and persistence entries"
+license = "MIT"
+
+[[bin]]
+name = "autoruns"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

@@ -1,14 +1,76 @@
-# Project
+# Autoruns for Linux
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+Autoruns for Linux lists programs, scripts, services, timers, and common persistence hooks configured to run automatically on Linux systems. It is a Rust command-line implementation inspired by Sysinternals Autoruns and Autorunsc for Windows.
 
-As the maintainer of this project, please make a few updates:
+This repository is in early implementation. The current scanner reports evidence from local files only; it does not execute discovered commands.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+## Build
+
+Install Rust, then build with Cargo:
+
+```bash
+cargo build --release
+```
+
+## Run
+
+Default scan, equivalent to logon startup entries:
+
+```bash
+cargo run -- -nobanner
+```
+
+Scan all implemented Linux categories:
+
+```bash
+cargo run -- -a '*' -nobanner
+```
+
+Emit JSON:
+
+```bash
+cargo run -- -a '*' --json -nobanner
+```
+
+Scan an alternate root, useful for tests, mounted systems, containers, and offline images:
+
+```bash
+cargo run -- --root /mnt/system -a '*' -nobanner
+```
+
+## Current scanner coverage
+
+- XDG desktop autostart entries under `/etc/xdg/autostart`, user home autostart directories, and `$HOME/.config/autostart`.
+- Shell startup files such as `/etc/profile`, `/etc/profile.d/*`, and common per-user shell profiles.
+- systemd services and timers under system and user unit directories.
+- cron and run-parts scheduled task locations under `/etc`.
+- Kernel module load configuration.
+- Boot hooks such as `rc.local` and SysV init scripts.
+- Dynamic loader hooks such as `/etc/ld.so.preload` and `/etc/ld.so.conf.d`.
+- Network dispatcher and interface hook directories.
+
+## Command-line options
+
+```text
+autoruns [-a <*|blnsthk>] [-c|-ct|--json|-x] [-h] [-m] [-s] [-u] [-t] [-o <output file>] [--root <path>] [-nobanner]
+```
+
+Category selectors:
+
+- `*`: all implemented Linux categories
+- `b`: boot hooks
+- `h`: image hijacks and preload hooks
+- `k`: dynamic loader hooks
+- `l`: logon startups, the default
+- `n`: network hooks
+- `s`: services and module startup entries
+- `t`: scheduled tasks
+
+Some Windows-compatible Autorunsc flags are accepted but not fully implemented yet, including signature filtering, Microsoft publisher filtering, unsigned-only filtering, and VirusTotal checks. Unsupported Windows-only categories are reported explicitly rather than mapped inaccurately.
+
+## Development plan
+
+See [docs/implementation-plan.md](docs/implementation-plan.md) for the feature comparison, phased implementation plan, Azure Pipelines notes, and current status.
 
 ## Contributing
 
