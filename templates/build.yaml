@@ -24,8 +24,9 @@ steps:
         export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    # Hosted ubuntu images ship rustup; install it if missing so both cargo and
-    # the rustup components used by static analysis are available.
+    # Hosted ubuntu images ship rustup; install it if missing. rustup then reads
+    # the in-repo rust-toolchain.toml and installs the pinned toolchain and
+    # components on the first cargo invocation, keeping builds reproducible.
     if ! command -v rustup >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
     fi

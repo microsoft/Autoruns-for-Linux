@@ -40,8 +40,8 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
 
     entries.sort_by(|left, right| {
         left.category
-            .to_string()
-            .cmp(&right.category.to_string())
+            .label()
+            .cmp(right.category.label())
             .then_with(|| left.location.cmp(&right.location))
             .then_with(|| left.name.cmp(&right.name))
     });

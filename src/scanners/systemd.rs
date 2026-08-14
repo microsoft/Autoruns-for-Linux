@@ -39,9 +39,17 @@ fn unit_dirs(options: &Options) -> Vec<std::path::PathBuf> {
         rooted(options, "/usr/lib/systemd/system"),
         rooted(options, "/lib/systemd/system"),
     ];
-    for home in list_dirs(&rooted(options, "/home")) {
+    let mut homes = list_dirs(&rooted(options, "/home"));
+    if options.root == std::path::Path::new("/") {
+        if let Ok(home) = std::env::var("HOME") {
+            homes.push(std::path::PathBuf::from(home));
+        }
+    }
+    for home in homes {
         dirs.push(home.join(".config/systemd/user"));
     }
+    dirs.sort();
+    dirs.dedup();
     dirs
 }
 

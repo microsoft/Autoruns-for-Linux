@@ -25,11 +25,9 @@ impl Category {
             Self::Network,
         ]
     }
-}
 
-impl fmt::Display for Category {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
+    pub fn label(&self) -> &'static str {
+        match self {
             Self::Logon => "Logon",
             Self::Services => "Services",
             Self::ScheduledTasks => "Scheduled Tasks",
@@ -38,8 +36,13 @@ impl fmt::Display for Category {
             Self::Loader => "Known DLLs / Loader",
             Self::Network => "Network Providers",
             Self::Unsupported => "Unsupported",
-        };
-        formatter.write_str(value)
+        }
+    }
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.label())
     }
 }
 
