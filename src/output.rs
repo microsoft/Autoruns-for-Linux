@@ -237,8 +237,9 @@ fn path_value(path: Option<&std::path::PathBuf>) -> String {
 }
 
 fn source_value(path: &std::path::Path, root: &std::path::Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
+    // Report the source as an absolute in-image path (leading `/`), consistent
+    // with the Location and imagePath fields, rather than a root-relative one.
+    crate::scanners::in_root_path(path, root)
         .display()
         .to_string()
 }

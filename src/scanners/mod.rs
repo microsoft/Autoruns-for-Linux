@@ -91,7 +91,17 @@ pub(crate) fn first_command_path(command: &str) -> Option<std::path::PathBuf> {
     shell_tokens(command)
         .into_iter()
         .find(|token| !is_env_assignment(token))
+        .map(|token| strip_exec_prefixes(&token).to_string())
+        .filter(|token| !token.is_empty())
         .map(std::path::PathBuf::from)
+}
+
+// systemd `ExecStart=` executables may carry one or more special prefixes
+// ("@", "-", ":", "+", "!", and "!!") that control how the command is run.
+// They are not part of the executable path, so strip any leading run of them
+// before treating the token as a path.
+fn strip_exec_prefixes(token: &str) -> &str {
+    token.trim_start_matches(['@', '-', ':', '+', '!'])
 }
 
 fn is_env_assignment(token: &str) -> bool {

@@ -51,7 +51,12 @@ fn parse_desktop_entry(options: &Options, path: &std::path::Path, content: &str)
                 .map(|value| value.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| "desktop autostart".to_string());
-    let command = values.get("Exec").cloned();
+    // An empty `Exec=` carries no command, so treat it as absent rather than
+    // reporting an empty command/image_path.
+    let command = values
+        .get("Exec")
+        .filter(|value| !value.is_empty())
+        .cloned();
 
     let mut entry = AutorunEntry::new(
         Category::Logon,
