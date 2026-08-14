@@ -12,9 +12,6 @@ parameters:
 - name: runStaticAnalysis
   type: boolean
   default: true
-- name: builddir
-  type: string
-  default: 'autoruns_build'
 - name: ldpath
   type: string
   default: ''

@@ -36,6 +36,14 @@ fn main() -> ExitCode {
         add_hashes(&options, &mut entries);
     }
 
+    if options.utc_timestamps {
+        for entry in &mut entries {
+            if let Some(timestamp) = entry.timestamp.take() {
+                entry.timestamp = Some(format_utc_timestamp(&timestamp));
+            }
+        }
+    }
+
     if options.hide_microsoft
         || options.verify_signatures
         || options.show_unsigned_only
@@ -77,6 +85,45 @@ fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
             }
         }
     }
+}
+
+// Renders an epoch-seconds timestamp as an ISO-8601 UTC string for `-t`.
+// Non-numeric values are returned unchanged.
+fn format_utc_timestamp(epoch: &str) -> String {
+    let seconds: i64 = match epoch.parse() {
+        Ok(value) => value,
+        Err(_) => return epoch.to_string(),
+    };
+    let days = seconds.div_euclid(86_400);
+    let time_of_day = seconds.rem_euclid(86_400);
+    let (hour, minute, second) = (
+        time_of_day / 3_600,
+        (time_of_day % 3_600) / 60,
+        time_of_day % 60,
+    );
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+// Howard Hinnant's days-to-civil-date algorithm (proleptic Gregorian, UTC),
+// mapping a day count relative to the Unix epoch to (year, month, day).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_portion = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_portion + 2) / 5 + 1;
+    let month = if month_portion < 10 {
+        month_portion + 3
+    } else {
+        month_portion - 9
+    };
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
 }
 
 // image_path values are absolute paths inside the scanned filesystem. When a

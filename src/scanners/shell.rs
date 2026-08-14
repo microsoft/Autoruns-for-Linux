@@ -14,18 +14,29 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     ];
     files.extend(list_files(&rooted(options, "/etc/profile.d")));
 
-    for home in list_dirs(&rooted(options, "/home")) {
-        for name in [
-            ".profile",
-            ".bash_profile",
-            ".bash_login",
-            ".bashrc",
-            ".zprofile",
-            ".zshrc",
-        ] {
+    let profile_names = [
+        ".profile",
+        ".bash_profile",
+        ".bash_login",
+        ".bashrc",
+        ".zprofile",
+        ".zshrc",
+    ];
+
+    let mut homes = list_dirs(&rooted(options, "/home"));
+    if options.root == std::path::Path::new("/") {
+        if let Ok(home) = std::env::var("HOME") {
+            homes.push(std::path::PathBuf::from(home));
+        }
+    }
+    for home in homes {
+        for name in profile_names {
             files.push(home.join(name));
         }
     }
+
+    files.sort();
+    files.dedup();
 
     let mut entries = Vec::new();
     for file in files.into_iter().filter(|path| path.is_file()) {

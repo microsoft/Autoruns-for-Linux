@@ -158,6 +158,14 @@ pub fn xml(entries: &[AutorunEntry], root: &std::path::Path) -> String {
         output.push_str(&xml_element("status", &entry.status.to_string()));
         output.push_str(&xml_element("name", &entry.name));
         output.push_str(&xml_element(
+            "description",
+            entry.description.as_deref().unwrap_or_default(),
+        ));
+        output.push_str(&xml_element(
+            "publisher",
+            entry.publisher.as_deref().unwrap_or_default(),
+        ));
+        output.push_str(&xml_element(
             "imagePath",
             &path_value(entry.image_path.as_ref()),
         ));
@@ -169,6 +177,14 @@ pub fn xml(entries: &[AutorunEntry], root: &std::path::Path) -> String {
         output.push_str(&xml_element(
             "source",
             &source_value(&entry.source_path, root),
+        ));
+        output.push_str(&xml_element(
+            "timestamp",
+            entry.timestamp.as_deref().unwrap_or_default(),
+        ));
+        output.push_str(&xml_element(
+            "sha256",
+            entry.sha256.as_deref().unwrap_or_default(),
         ));
         output.push_str(&xml_element(
             "note",
