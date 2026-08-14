@@ -32,7 +32,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
             if path.extension().and_then(|value| value.to_str()) != Some("desktop") {
                 continue;
             }
-            if let Some(content) = read_to_string(&path) {
+            if let Some(content) = read_to_string(&options.root, &path) {
                 entries.push(parse_desktop_entry(options, &path, &content));
             }
         }
@@ -67,7 +67,7 @@ fn parse_desktop_entry(options: &Options, path: &std::path::Path, content: &str)
     entry.description = values.get("Comment").cloned();
     entry.command = command.clone();
     entry.image_path = command.as_deref().and_then(first_command_path);
-    entry.timestamp = modified_timestamp(path);
+    entry.timestamp = modified_timestamp(&options.root, path);
     entry.status = if values
         .get("Hidden")
         .map(|value| value.eq_ignore_ascii_case("true"))

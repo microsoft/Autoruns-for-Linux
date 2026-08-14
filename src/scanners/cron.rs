@@ -15,7 +15,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         .into_iter()
         .chain(list_files(&rooted(options, "/etc/cron.d")))
     {
-        if let Some(content) = read_to_string(&file) {
+        if let Some(content) = read_to_string(&options.root, &file) {
             entries.extend(parse_crontab(options, &file, &content));
         }
     }
@@ -40,7 +40,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
             entry.image_path = Some(in_image.clone());
             entry.command = Some(in_image.display().to_string());
             entry.status = EntryStatus::Enabled;
-            entry.timestamp = modified_timestamp(&script);
+            entry.timestamp = modified_timestamp(&options.root, &script);
             entry.note = Some("run-parts cron directory".to_string());
             entries.push(entry);
         }
@@ -75,7 +75,7 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
         entry.command = Some(command.clone());
         entry.image_path = first_command_path(&command);
         entry.status = EntryStatus::Enabled;
-        entry.timestamp = modified_timestamp(path);
+        entry.timestamp = modified_timestamp(&options.root, path);
         entries.push(entry);
     }
     entries

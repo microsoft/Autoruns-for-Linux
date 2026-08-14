@@ -53,8 +53,8 @@ pub(crate) fn rooted(options: &Options, relative: &str) -> std::path::PathBuf {
     options.root.join(relative)
 }
 
-pub(crate) fn read_to_string(path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(resolve_in_root(root, path)).ok()
 }
 
 pub(crate) fn list_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -147,7 +147,7 @@ fn shell_tokens(command: &str) -> Vec<String> {
                     has_token = false;
                 }
             }
-            (_, '\\') => {
+            (state, '\\') if state != Some('\'') => {
                 if let Some(next) = chars.next() {
                     token.push(next);
                     has_token = true;
@@ -166,8 +166,11 @@ fn shell_tokens(command: &str) -> Vec<String> {
     tokens
 }
 
-pub(crate) fn modified_timestamp(path: &std::path::Path) -> Option<String> {
-    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+pub(crate) fn modified_timestamp(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    let modified = std::fs::metadata(resolve_in_root(root, path))
+        .ok()?
+        .modified()
+        .ok()?;
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(duration.as_secs().to_string())
 }
@@ -186,5 +189,50 @@ pub(crate) fn in_root_path(path: &std::path::Path, root: &std::path::Path) -> st
     match path.strip_prefix(root) {
         Ok(relative) => std::path::Path::new("/").join(relative),
         Err(_) => path.to_path_buf(),
+    }
+}
+
+// Maximum symlink hops to follow while re-anchoring under --root. Mirrors the
+// usual kernel limit and guards against cyclic links.
+const MAX_SYMLINK_HOPS: usize = 40;
+
+// Resolves `path` for reading or stat-ing so a symlink can never escape a
+// non-default `--root`. Scanning the live root ("/") is a passthrough: normal
+// symlink following is correct there because the host *is* the scanned image
+// (enabled systemd units, /bin/sh, and many /etc entries are symlinks that must
+// be followed). Under an offline image root, each symlink is resolved by hand
+// and any absolute target is re-anchored under `root`, so a link such as
+// /etc/systemd/system/default.target -> /lib/systemd/system/graphical.target
+// reads the in-image file rather than the host's.
+pub(crate) fn resolve_in_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> std::path::PathBuf {
+    if root == std::path::Path::new("/") {
+        return path.to_path_buf();
+    }
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_SYMLINK_HOPS {
+        let target = match std::fs::read_link(&current) {
+            Ok(target) => target,
+            Err(_) => break, // not a symlink (or unreadable): stop here
+        };
+        current = if target.is_absolute() {
+            anchor_under_root(root, &target)
+        } else if let Some(parent) = current.parent() {
+            parent.join(target)
+        } else {
+            anchor_under_root(root, &target)
+        };
+    }
+    current
+}
+
+// Re-anchors an absolute path under `root` (e.g. /lib/x under /mnt/img becomes
+// /mnt/img/lib/x). A no-op for relative paths.
+fn anchor_under_root(root: &std::path::Path, absolute: &std::path::Path) -> std::path::PathBuf {
+    match absolute.strip_prefix("/") {
+        Ok(relative) => root.join(relative),
+        Err(_) => absolute.to_path_buf(),
     }
 }

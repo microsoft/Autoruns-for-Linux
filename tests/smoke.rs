@@ -197,6 +197,27 @@ fn enabled_systemd_unit_is_reported_enabled() {
 }
 
 #[test]
+fn absolute_symlink_is_reanchored_under_root() {
+    // A scanned config that is an absolute symlink inside the image must be read
+    // from the in-image target, never followed out to the host filesystem.
+    let root = TempRoot::new();
+    root.write("payload/preload.conf", "/opt/lib/reanchored.so\n");
+    // Point /etc/ld.so.preload at an absolute in-image path. Without root-aware
+    // resolution this would resolve against the host `/payload/preload.conf`.
+    let link = root.path().join("etc/ld.so.preload");
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    unix_fs::symlink("/payload/preload.conf", &link).expect("create absolute symlink");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "k", "--root", &root_arg]);
+
+    assert!(
+        stdout.contains("reanchored.so"),
+        "absolute symlink should be re-anchored under --root:\n{stdout}"
+    );
+}
+
+#[test]
 fn default_category_is_logon_only() {
     let root = TempRoot::new();
     populate(&root);

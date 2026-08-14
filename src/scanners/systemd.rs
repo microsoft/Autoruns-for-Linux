@@ -25,7 +25,7 @@ fn scan_units(options: &Options, extension: &str, category: Category) -> Vec<Aut
             if path.extension().and_then(|value| value.to_str()) != Some(extension) {
                 continue;
             }
-            if let Some(content) = read_to_string(&path) {
+            if let Some(content) = read_to_string(&options.root, &path) {
                 entries.push(parse_unit(options, &path, &content, category));
             }
         }
@@ -87,7 +87,7 @@ fn parse_unit(
     entry.description = values.get("Description").cloned();
     entry.command = command.clone();
     entry.image_path = command.as_deref().and_then(first_command_path);
-    entry.timestamp = modified_timestamp(path);
+    entry.timestamp = modified_timestamp(&options.root, path);
     entry.status = if is_enabled_unit(options, path) {
         EntryStatus::Enabled
     } else {

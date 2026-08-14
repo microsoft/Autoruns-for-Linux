@@ -87,6 +87,7 @@ fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
                 continue;
             }
             let candidate = resolve_under_root(&options.root, path);
+            let candidate = scanners::resolve_in_root(&options.root, &candidate);
             if candidate.is_file() {
                 entry.sha256 = sha256_file(&candidate).ok();
             }

@@ -4,7 +4,8 @@ use crate::{
 };
 
 use super::{
-    display_location, in_root_path, list_files, modified_timestamp, read_to_string, rooted,
+    display_location, in_root_path, list_files, modified_timestamp, read_to_string,
+    resolve_in_root, rooted,
 };
 
 pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
@@ -13,7 +14,7 @@ pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
         .into_iter()
         .chain(list_files(&rooted(options, "/etc/modules-load.d")))
     {
-        if let Some(content) = read_to_string(&path) {
+        if let Some(content) = read_to_string(&options.root, &path) {
             for (line_number, line) in content.lines().enumerate() {
                 let module = line.trim();
                 if module.is_empty() || module.starts_with('#') {
@@ -30,7 +31,7 @@ pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
                     path.clone(),
                 );
                 entry.status = EntryStatus::Enabled;
-                entry.timestamp = modified_timestamp(&path);
+                entry.timestamp = modified_timestamp(&options.root, &path);
                 entry.note = Some("kernel module load configuration".to_string());
                 entries.push(entry);
             }
@@ -45,7 +46,7 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
         rooted(options, "/etc/rc.local"),
         rooted(options, "/etc/init.d/rc.local"),
     ] {
-        if path.exists() {
+        if resolve_in_root(&options.root, &path).exists() {
             let mut entry = AutorunEntry::new(
                 Category::Boot,
                 "rc.local",
@@ -56,7 +57,7 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
             entry.command = Some(in_image.display().to_string());
             entry.image_path = Some(in_image);
             entry.status = EntryStatus::Enabled;
-            entry.timestamp = modified_timestamp(&path);
+            entry.timestamp = modified_timestamp(&options.root, &path);
             entries.push(entry);
         }
     }
@@ -74,7 +75,7 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
         entry.command = Some(in_image.display().to_string());
         entry.image_path = Some(in_image);
         entry.status = EntryStatus::Unknown;
-        entry.timestamp = modified_timestamp(&script);
+        entry.timestamp = modified_timestamp(&options.root, &script);
         entry.note = Some("SysV init script; enabled state depends on rc.d links".to_string());
         entries.push(entry);
     }
@@ -94,7 +95,7 @@ pub fn scan_hijacks(options: &Options) -> Vec<AutorunEntry> {
             path.clone(),
         );
         entry.status = EntryStatus::Unknown;
-        entry.timestamp = modified_timestamp(&path);
+        entry.timestamp = modified_timestamp(&options.root, &path);
         entry.note = Some("alternatives-managed command target".to_string());
         entries.push(entry);
     }
@@ -105,7 +106,7 @@ pub fn scan_hijacks(options: &Options) -> Vec<AutorunEntry> {
 pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
     let preload = rooted(options, "/etc/ld.so.preload");
-    if let Some(content) = read_to_string(&preload) {
+    if let Some(content) = read_to_string(&options.root, &preload) {
         for (line_number, line) in content.lines().enumerate() {
             let value = line.trim();
             if value.is_empty() || value.starts_with('#') {
@@ -123,7 +124,7 @@ pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
             );
             entry.image_path = Some(std::path::PathBuf::from(value));
             entry.status = EntryStatus::Enabled;
-            entry.timestamp = modified_timestamp(&preload);
+            entry.timestamp = modified_timestamp(&options.root, &preload);
             entry.note = Some("dynamic loader preload".to_string());
             entries.push(entry);
         }
@@ -139,7 +140,7 @@ pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
             file.clone(),
         );
         entry.status = EntryStatus::Unknown;
-        entry.timestamp = modified_timestamp(&file);
+        entry.timestamp = modified_timestamp(&options.root, &file);
         entry.note = Some("dynamic linker search path configuration".to_string());
         entries.push(entry);
     }
@@ -170,7 +171,7 @@ pub fn scan_network(options: &Options) -> Vec<AutorunEntry> {
             entry.command = Some(in_image.display().to_string());
             entry.image_path = Some(in_image);
             entry.status = EntryStatus::Enabled;
-            entry.timestamp = modified_timestamp(&script);
+            entry.timestamp = modified_timestamp(&options.root, &script);
             entries.push(entry);
         }
     }
