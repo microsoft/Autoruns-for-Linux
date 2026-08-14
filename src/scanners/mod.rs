@@ -122,6 +122,15 @@ fn shell_tokens(command: &str) -> Vec<String> {
                 has_token = true;
             }
             (Some(current), value) if value == current => quote = None,
+            (None, ';') => {
+                // An unquoted ';' is a shell command separator. Terminating the
+                // token here keeps the leading command clean when several are
+                // joined together (e.g. concatenated systemd ExecStart values).
+                if has_token {
+                    tokens.push(std::mem::take(&mut token));
+                    has_token = false;
+                }
+            }
             (None, value) if value.is_whitespace() => {
                 if has_token {
                     tokens.push(std::mem::take(&mut token));

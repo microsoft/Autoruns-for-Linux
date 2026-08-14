@@ -1,6 +1,10 @@
 //! CLI smoke tests that build a temporary filesystem root with representative
 //! autorun fixtures and assert that each scanner category and output format
 //! behaves as expected when driven through the `--root` option.
+//!
+//! The fixtures rely on Unix symlinks, so the whole suite is gated to Unix
+//! targets to keep `cargo test` compiling elsewhere.
+#![cfg(unix)]
 
 use std::fs;
 use std::os::unix::fs as unix_fs;
@@ -215,9 +219,12 @@ fn json_output_is_wellformed_array() {
     let trimmed = stdout.trim();
     assert!(
         trimmed.starts_with('['),
-        "json should start with [: {trimmed}"
+        "json should start with '[': {trimmed}"
     );
-    assert!(trimmed.ends_with(']'), "json should end with ]: {trimmed}");
+    assert!(
+        trimmed.ends_with(']'),
+        "json should end with ']': {trimmed}"
+    );
     assert!(trimmed.contains("\"category\": \"Logon\""));
     assert!(trimmed.contains("\"name\": \"Example Autostart\""));
 }
