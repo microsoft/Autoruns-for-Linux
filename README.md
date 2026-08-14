@@ -68,10 +68,6 @@ Category selectors:
 
 Some Windows-compatible Autorunsc flags are accepted but not fully implemented yet, including signature filtering, Microsoft publisher filtering, unsigned-only filtering, and VirusTotal checks. Unsupported Windows-only categories are reported explicitly rather than mapped inaccurately.
 
-## Development plan
-
-See [docs/implementation-plan.md](docs/implementation-plan.md) for the feature comparison, phased implementation plan, Azure Pipelines notes, and current status.
-
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a

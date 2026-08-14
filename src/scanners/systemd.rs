@@ -106,9 +106,8 @@ fn parse_unit_values(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            values
-                .entry(key.to_string())
-                .or_insert_with(|| value.to_string());
+            // systemd INI semantics: a later assignment overrides an earlier one.
+            values.insert(key.to_string(), value.to_string());
         }
     }
     values
