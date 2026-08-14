@@ -35,6 +35,14 @@ steps:
     fi
     . "$HOME/.cargo/env" 2>/dev/null || true
 
+    # rustup being present does not guarantee the toolchain binaries are on
+    # PATH (partial install, or a missing $HOME/.cargo/env). Check explicitly so
+    # the failure is actionable rather than a bare "command not found".
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+        echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+        exit 1
+    fi
+
     rustc --version
     cargo --version
 

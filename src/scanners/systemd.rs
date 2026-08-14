@@ -69,8 +69,13 @@ fn parse_unit(
         .unwrap_or_else(|| "systemd unit".to_string());
     let command = values
         .get("ExecStart")
-        .or_else(|| values.get("ExecStartPre"))
-        .or_else(|| values.get("ExecStartPost"))
+        .filter(|value| !value.is_empty())
+        .or_else(|| values.get("ExecStartPre").filter(|value| !value.is_empty()))
+        .or_else(|| {
+            values
+                .get("ExecStartPost")
+                .filter(|value| !value.is_empty())
+        })
         .cloned();
 
     let mut entry = AutorunEntry::new(

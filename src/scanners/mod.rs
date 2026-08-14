@@ -162,11 +162,11 @@ pub(crate) fn modified_timestamp(path: &std::path::Path) -> Option<String> {
     Some(duration.as_secs().to_string())
 }
 
+// Reports the entry's location as an absolute path inside the scanned image
+// (leading `/`), so it stays consistent with image_path/command rather than
+// leaking the host mount point of a non-default --root.
 pub(crate) fn display_location(path: &std::path::Path, root: &std::path::Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    in_root_path(path, root).display().to_string()
 }
 
 // Converts a rooted host path (under --root) back to its absolute path inside

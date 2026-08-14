@@ -23,13 +23,21 @@ struct TempRoot {
 
 impl TempRoot {
     fn new() -> Self {
+        // Combine the PID, a high-resolution timestamp, and a process-local
+        // counter so the path is unique across concurrent runs and re-runs, then
+        // create it with `create_dir` (not `create_dir_all`) so an existing
+        // leftover directory is a hard error rather than silently reused.
         let unique = format!(
-            "autoruns-smoke-{}-{}",
+            "autoruns-smoke-{}-{}-{}",
             std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let path = std::env::temp_dir().join(unique);
-        fs::create_dir_all(&path).expect("create temp root");
+        fs::create_dir(&path).expect("create unique temp root");
         Self { path }
     }
 
