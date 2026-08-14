@@ -24,7 +24,7 @@ steps:
     set -euo pipefail
 
     if [ -n "${{ parameters.ldpath }}" ]; then
-        export LD_LIBRARY_PATH="${{ parameters.ldpath }}:$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
     # Hosted ubuntu images ship rustup/cargo; install a minimal toolchain if missing.

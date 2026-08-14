@@ -24,6 +24,9 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         }
     }
 
+    dirs.sort();
+    dirs.dedup();
+
     for dir in dirs {
         for path in list_files(&dir) {
             if path.extension().and_then(|value| value.to_str()) != Some("desktop") {

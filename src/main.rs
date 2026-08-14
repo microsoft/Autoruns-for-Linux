@@ -33,7 +33,7 @@ fn main() -> ExitCode {
     let mut entries = scanners::scan(&options);
 
     if options.show_hashes {
-        add_hashes(&mut entries);
+        add_hashes(&options, &mut entries);
     }
 
     if options.hide_microsoft
@@ -50,10 +50,10 @@ fn main() -> ExitCode {
 
     let rendered = match options.format {
         OutputFormat::Table => output::table(&entries),
-        OutputFormat::Csv => output::delimited(&entries, ','),
-        OutputFormat::Tsv => output::delimited(&entries, '\t'),
-        OutputFormat::Json => output::json(&entries),
-        OutputFormat::Xml => output::xml(&entries),
+        OutputFormat::Csv => output::delimited(&entries, ',', &options.root),
+        OutputFormat::Tsv => output::delimited(&entries, '\t', &options.root),
+        OutputFormat::Json => output::json(&entries, &options.root),
+        OutputFormat::Xml => output::xml(&entries, &options.root),
     };
 
     if let Some(path) = &options.output_file {
@@ -68,13 +68,27 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn add_hashes(entries: &mut [AutorunEntry]) {
+fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
     for entry in entries {
         if let Some(path) = entry.image_path.as_ref() {
-            if path.is_file() {
-                entry.sha256 = sha256_file(path).ok();
+            let candidate = resolve_under_root(&options.root, path);
+            if candidate.is_file() {
+                entry.sha256 = sha256_file(&candidate).ok();
             }
         }
+    }
+}
+
+// image_path values are absolute paths inside the scanned filesystem. When a
+// non-default --root is used they must be re-anchored under that root before the
+// on-disk file can be hashed; paths already under the root are left untouched.
+fn resolve_under_root(root: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
+    if root == std::path::Path::new("/") || path.starts_with(root) {
+        return path.to_path_buf();
+    }
+    match path.strip_prefix("/") {
+        Ok(relative) => root.join(relative),
+        Err(_) => path.to_path_buf(),
     }
 }
 

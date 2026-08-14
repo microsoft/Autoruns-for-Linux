@@ -72,7 +72,7 @@ fn parse_unit(
     entry.command = command.clone();
     entry.image_path = command.as_deref().and_then(first_command_path);
     entry.timestamp = modified_timestamp(path);
-    entry.status = if is_enabled_unit(path) {
+    entry.status = if is_enabled_unit(options, path) {
         EntryStatus::Enabled
     } else {
         EntryStatus::Unknown
@@ -106,22 +106,35 @@ fn parse_unit_values(content: &str) -> HashMap<String, String> {
     values
 }
 
-fn is_enabled_unit(path: &std::path::Path) -> bool {
+fn is_enabled_unit(options: &Options, path: &std::path::Path) -> bool {
     let Some(file_name) = path.file_name() else {
         return false;
     };
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    for dir in list_dirs(parent) {
-        if dir
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.ends_with("wants"))
-            .unwrap_or(false)
-            && dir.join(file_name).exists()
-        {
-            return true;
+
+    // Enablement symlinks live in `*.wants` directories. For units shipped under
+    // /usr/lib or /lib, those symlinks are created under /etc/systemd/system,
+    // so both the unit's own directory and the canonical enablement root must be
+    // searched.
+    let mut bases: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(parent) = path.parent() {
+        bases.push(parent.to_path_buf());
+    }
+    let etc = rooted(options, "/etc/systemd/system");
+    if !bases.contains(&etc) {
+        bases.push(etc);
+    }
+
+    for base in bases {
+        for dir in list_dirs(&base) {
+            if dir
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.ends_with("wants"))
+                .unwrap_or(false)
+                && dir.join(file_name).exists()
+            {
+                return true;
+            }
         }
     }
     false

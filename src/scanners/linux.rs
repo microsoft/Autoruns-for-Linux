@@ -3,9 +3,7 @@ use crate::{
     model::{AutorunEntry, Category, EntryStatus},
 };
 
-use super::{
-    display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted,
-};
+use super::{display_location, list_files, modified_timestamp, read_to_string, rooted};
 
 pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -166,7 +164,7 @@ pub fn scan_network(options: &Options) -> Vec<AutorunEntry> {
                 script.clone(),
             );
             entry.command = Some(script.display().to_string());
-            entry.image_path = first_command_path(&script.display().to_string());
+            entry.image_path = Some(script.clone());
             entry.status = EntryStatus::Enabled;
             entry.timestamp = modified_timestamp(&script);
             entries.push(entry);

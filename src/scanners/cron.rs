@@ -53,7 +53,7 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
         let trimmed = line.trim();
         if trimmed.is_empty()
             || trimmed.starts_with('#')
-            || trimmed.contains('=') && !trimmed.starts_with('@')
+            || (!trimmed.starts_with('@') && is_environment_assignment(trimmed))
         {
             continue;
         }
@@ -79,13 +79,22 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
     entries
 }
 
+fn is_environment_assignment(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .map(|first| first.contains('='))
+        .unwrap_or(false)
+}
+
 fn cron_command(line: &str) -> Option<String> {
     if line.starts_with('@') {
-        return line
-            .split_once(char::is_whitespace)
-            .map(|(_, command)| command.trim())
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        // System crontab entries (/etc/crontab, /etc/cron.d) place a user
+        // field between the schedule macro and the command.
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 3 {
+            return None;
+        }
+        return Some(fields[2..].join(" "));
     }
 
     let fields: Vec<&str> = line.split_whitespace().collect();

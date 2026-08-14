@@ -56,7 +56,7 @@ fn write_row<S: AsRef<str>>(output: &mut String, cells: &[S], widths: &[usize]) 
     output.push('\n');
 }
 
-pub fn delimited(entries: &[AutorunEntry], delimiter: char) -> String {
+pub fn delimited(entries: &[AutorunEntry], delimiter: char, root: &std::path::Path) -> String {
     let mut output = String::new();
     let headers = [
         "Category",
@@ -83,7 +83,7 @@ pub fn delimited(entries: &[AutorunEntry], delimiter: char) -> String {
             path_value(entry.image_path.as_ref()),
             entry.command.clone().unwrap_or_default(),
             entry.location.clone(),
-            entry.source_path.display().to_string(),
+            source_value(&entry.source_path, root),
             entry.timestamp.clone().unwrap_or_default(),
             entry.sha256.clone().unwrap_or_default(),
             entry.note.clone().unwrap_or_default(),
@@ -93,7 +93,7 @@ pub fn delimited(entries: &[AutorunEntry], delimiter: char) -> String {
     output
 }
 
-pub fn json(entries: &[AutorunEntry]) -> String {
+pub fn json(entries: &[AutorunEntry], root: &std::path::Path) -> String {
     let mut output = String::from("[\n");
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
@@ -126,7 +126,7 @@ pub fn json(entries: &[AutorunEntry]) -> String {
         output.push_str(&json_field("location", &entry.location, false));
         output.push_str(&json_field(
             "source",
-            &entry.source_path.display().to_string(),
+            &source_value(&entry.source_path, root),
             false,
         ));
         output.push_str(&json_field(
@@ -150,7 +150,7 @@ pub fn json(entries: &[AutorunEntry]) -> String {
     output
 }
 
-pub fn xml(entries: &[AutorunEntry]) -> String {
+pub fn xml(entries: &[AutorunEntry], root: &std::path::Path) -> String {
     let mut output = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<autoruns>\n");
     for entry in entries {
         output.push_str("  <entry>\n");
@@ -168,7 +168,7 @@ pub fn xml(entries: &[AutorunEntry]) -> String {
         output.push_str(&xml_element("location", &entry.location));
         output.push_str(&xml_element(
             "source",
-            &entry.source_path.display().to_string(),
+            &source_value(&entry.source_path, root),
         ));
         output.push_str(&xml_element(
             "note",
@@ -218,6 +218,13 @@ fn xml_element(name: &str, value: &str) -> String {
 fn path_value(path: Option<&std::path::PathBuf>) -> String {
     path.map(|path| path.display().to_string())
         .unwrap_or_default()
+}
+
+fn source_value(path: &std::path::Path, root: &std::path::Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn escape_json(value: &str) -> String {
