@@ -1,6 +1,6 @@
 # Autoruns for Linux implementation plan
 
-Last updated: 2026-08-12
+Last updated: 2026-08-14
 
 ## Current repository state
 
@@ -184,3 +184,28 @@ Completed since last update:
 - Ran `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `cargo run -- --help`.
 - Added `tests/smoke.rs` with fixture-based `--root` integration tests covering every implemented scanner category and each output format.
 - Added the Azure Pipelines definition and reusable build template modeled on Sysinternals-jcd.
+
+## Code review fixes
+
+Addressed on the `initial-rust-implementation` PR. All changes verified with `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all` (9 tests).
+
+First review round:
+
+- **desktop**: Deduplicate autostart directories (`dirs.sort(); dirs.dedup()`) so a `$HOME` under `/home` is not scanned twice, preventing duplicate `.desktop` entries.
+- **linux (network)**: Use the file `PathBuf` directly for the network-hook `image_path` instead of shell-parsing the path (which truncated paths containing whitespace).
+- **cron (filter)**: Only skip environment-assignment lines by inspecting the first token, instead of dropping any cron line containing `=` (which discarded valid commands with `=` in their arguments).
+- **cron (@macros)**: Strip the leading schedule macro and user field from system crontab (`/etc/crontab`, `/etc/cron.d`) `@reboot`/`@daily` entries so the command no longer includes the user column.
+- **main (hashing)**: Re-anchor `image_path` under `--root` via `resolve_under_root` before hashing, so offline/mounted scans hash the in-image file rather than the host file.
+- **systemd (enablement)**: Detect enablement via `*.wants` under `/etc/systemd/system` as well as the unit's own directory, so units shipped in `/usr/lib` and `/lib` are not misreported as `unknown`.
+- **output (Source)**: Root-strip the `Source` column so output is stable and independent of where the scan root is mounted.
+- **CI (build.yaml)**: Use safe `LD_LIBRARY_PATH` expansion (`${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}`) so the script does not fail under `set -u` when the variable is unset.
+
+Second review round (suppressed/consistency notes):
+
+- **image_path/command contract**: Store the in-image absolute path (e.g. `/etc/profile`) rather than the rooted host path for rc.local, SysV init scripts, network hooks, shell startup files, and run-parts cron scripts. Added the shared `in_root_path` helper (a no-op when scanning `/`); `source_path` remains rooted for reading.
+- **first_command_path**: Skip leading `KEY=value` environment-assignment tokens (via new `shell_tokens`/`is_env_assignment`) so commands like `FOO=bar /usr/bin/app` still yield a usable `image_path` for hashing.
+- **CI (build.yaml)**: Check for `rustup` (not `cargo`) before installing the toolchain, so images with a distro-provided `cargo` but no `rustup` do not fail the later `rustup component add` static-analysis step.
+
+Deferred (needs a product decision):
+
+- `-t` / `utc_timestamps` is currently a no-op. Gating timestamp visibility on it would change default output semantics, so it is left unchanged pending direction on the intended behavior.
