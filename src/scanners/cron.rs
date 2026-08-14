@@ -82,10 +82,20 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
 }
 
 fn is_environment_assignment(line: &str) -> bool {
-    line.split_whitespace()
-        .next()
-        .map(|first| first.contains('='))
-        .unwrap_or(false)
+    // crontab(5) environment settings have the form `name = value`, where the
+    // spaces around '=' are optional. The name is a single shell-style
+    // identifier, so anything with whitespace before '=' is a job, not a
+    // variable assignment.
+    let Some((key, _)) = line.split_once('=') else {
+        return false;
+    };
+    let key = key.trim();
+    !key.is_empty()
+        && !key.contains(char::is_whitespace)
+        && key.starts_with(|first: char| first.is_ascii_alphabetic() || first == '_')
+        && key
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || value == '_')
 }
 
 fn cron_command(line: &str) -> Option<String> {

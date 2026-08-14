@@ -264,10 +264,20 @@ fn escape_json(value: &str) -> String {
 }
 
 fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            '\t' | '\n' | '\r' => escaped.push(ch),
+            // XML 1.0 cannot represent the other C0 control characters, even as
+            // numeric references, so drop them to keep the document valid.
+            c if (c as u32) < 0x20 => {}
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }

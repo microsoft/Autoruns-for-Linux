@@ -83,7 +83,6 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
 
 pub fn scan_hijacks(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
-    entries.extend(scan_loader(options));
 
     for path in list_files(&rooted(options, "/etc/alternatives")) {
         let mut entry = AutorunEntry::new(
