@@ -246,4 +246,8 @@ fn unknown_option_fails_with_usage() {
     assert!(!output.status.success(), "unknown flag should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unknown option"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Usage:"),
+        "usage text should be printed on failure: {stderr}"
+    );
 }

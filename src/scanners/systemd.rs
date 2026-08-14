@@ -109,9 +109,34 @@ fn parse_unit_values(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            // systemd INI semantics: a later assignment overrides an earlier one.
+            let key = key.trim();
+            let value = value.trim();
             // Keys and values may be padded with spaces around the '='.
-            values.insert(key.trim().to_string(), value.trim().to_string());
+            if key.starts_with("ExecStart") {
+                // systemd runs multiple ExecStart*/ExecStartPre/ExecStartPost
+                // assignments in sequence, so accumulate them instead of
+                // dropping earlier commands. An empty assignment resets the
+                // list, matching systemd semantics.
+                if value.is_empty() {
+                    values.insert(key.to_string(), String::new());
+                } else {
+                    values
+                        .entry(key.to_string())
+                        .and_modify(|existing: &mut String| {
+                            if existing.is_empty() {
+                                existing.push_str(value);
+                            } else {
+                                existing.push_str("; ");
+                                existing.push_str(value);
+                            }
+                        })
+                        .or_insert_with(|| value.to_string());
+                }
+            } else {
+                // systemd INI semantics: a later assignment overrides an
+                // earlier one for ordinary keys.
+                values.insert(key.to_string(), value.to_string());
+            }
         }
     }
     values
@@ -142,7 +167,7 @@ fn is_enabled_unit(options: &Options, path: &std::path::Path) -> bool {
                 .and_then(|value| value.to_str())
                 .map(|value| value.ends_with("wants"))
                 .unwrap_or(false)
-                && dir.join(file_name).exists()
+                && dir.join(file_name).symlink_metadata().is_ok()
             {
                 return true;
             }
