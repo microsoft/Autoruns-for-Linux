@@ -38,6 +38,9 @@ fn unit_dirs(options: &Options) -> Vec<std::path::PathBuf> {
         rooted(options, "/etc/systemd/system"),
         rooted(options, "/usr/lib/systemd/system"),
         rooted(options, "/lib/systemd/system"),
+        rooted(options, "/etc/systemd/user"),
+        rooted(options, "/usr/lib/systemd/user"),
+        rooted(options, "/lib/systemd/user"),
     ];
     let mut homes = list_dirs(&rooted(options, "/home"));
     if options.root == std::path::Path::new("/") {
@@ -107,7 +110,8 @@ fn parse_unit_values(content: &str) -> HashMap<String, String> {
         }
         if let Some((key, value)) = line.split_once('=') {
             // systemd INI semantics: a later assignment overrides an earlier one.
-            values.insert(key.to_string(), value.to_string());
+            // Keys and values may be padded with spaces around the '='.
+            values.insert(key.trim().to_string(), value.trim().to_string());
         }
     }
     values

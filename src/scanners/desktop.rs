@@ -106,7 +106,8 @@ fn parse_key_values(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.to_string(), value.to_string());
+            // `.desktop` files may pad keys/values with spaces around '='.
+            values.insert(key.trim().to_string(), value.trim().to_string());
         }
     }
 

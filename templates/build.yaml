@@ -24,11 +24,14 @@ steps:
         export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    # Hosted ubuntu images ship rustup; install it if missing. rustup then reads
-    # the in-repo rust-toolchain.toml and installs the pinned toolchain and
-    # components on the first cargo invocation, keeping builds reproducible.
+    # Hosted ubuntu images ship rustup. Fail fast if it is missing rather than
+    # piping a remote install script into a shell, which is a CI supply-chain
+    # risk. rustup then reads the in-repo rust-toolchain.toml and installs the
+    # pinned toolchain and components on the first cargo invocation, keeping
+    # builds reproducible.
     if ! command -v rustup >/dev/null 2>&1; then
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+        echo "rustup not found on the build image. Install rustup (or add a pinned, checksum-verified rustup-init step) before running this pipeline." >&2
+        exit 1
     fi
     . "$HOME/.cargo/env" 2>/dev/null || true
 
