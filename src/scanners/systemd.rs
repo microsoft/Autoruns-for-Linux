@@ -174,7 +174,11 @@ fn is_enabled_unit(options: &Options, path: &std::path::Path) -> bool {
                 .and_then(|value| value.to_str())
                 .map(|value| value.ends_with("wants"))
                 .unwrap_or(false)
-                && dir.join(file_name).symlink_metadata().is_ok()
+                && dir
+                    .join(file_name)
+                    .symlink_metadata()
+                    .map(|metadata| metadata.file_type().is_symlink())
+                    .unwrap_or(false)
             {
                 return true;
             }

@@ -55,6 +55,14 @@ steps:
       set -euo pipefail
       . "$HOME/.cargo/env" 2>/dev/null || true
 
+      # Each Azure DevOps script step runs in a fresh shell, so re-verify the
+      # toolchain is on PATH here too; otherwise fmt/clippy can fail with a bare
+      # "command not found" even when the build step passed.
+      if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+          echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+          exit 1
+      fi
+
       cd "${{ parameters.srcPath }}"
       rustup component add rustfmt clippy
       cargo fmt --all -- --check
@@ -64,6 +72,13 @@ steps:
 - script: |
     set -euo pipefail
     . "$HOME/.cargo/env" 2>/dev/null || true
+
+    # Fresh shell for this step: re-verify the toolchain is on PATH so a missing
+    # $HOME/.cargo/env yields an actionable error instead of "command not found".
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+        echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+        exit 1
+    fi
 
     cd "${{ parameters.srcPath }}"
     cargo test --all
