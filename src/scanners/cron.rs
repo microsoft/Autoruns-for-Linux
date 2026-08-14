@@ -1,6 +1,11 @@
-use crate::{cli::Options, model::{AutorunEntry, Category, EntryStatus}};
+use crate::{
+    cli::Options,
+    model::{AutorunEntry, Category, EntryStatus},
+};
 
-use super::{display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted};
+use super::{
+    display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted,
+};
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -14,11 +19,19 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         }
     }
 
-    for dir_name in ["/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly"] {
+    for dir_name in [
+        "/etc/cron.hourly",
+        "/etc/cron.daily",
+        "/etc/cron.weekly",
+        "/etc/cron.monthly",
+    ] {
         for script in list_files(&rooted(options, dir_name)) {
             let mut entry = AutorunEntry::new(
                 Category::ScheduledTasks,
-                script.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "cron script".to_string()),
+                script
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "cron script".to_string()),
                 display_location(&script, &options.root),
                 script.clone(),
             );
@@ -38,7 +51,10 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
     let mut entries = Vec::new();
     for (line_number, line) in content.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains('=') && !trimmed.starts_with('@') {
+        if trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.contains('=') && !trimmed.starts_with('@')
+        {
             continue;
         }
         let Some(command) = cron_command(trimmed) else {
@@ -47,7 +63,11 @@ fn parse_crontab(options: &Options, path: &std::path::Path, content: &str) -> Ve
         let mut entry = AutorunEntry::new(
             Category::ScheduledTasks,
             format!("cron line {}", line_number + 1),
-            format!("{}:{}", display_location(path, &options.root), line_number + 1),
+            format!(
+                "{}:{}",
+                display_location(path, &options.root),
+                line_number + 1
+            ),
             path.to_path_buf(),
         );
         entry.command = Some(command.clone());
@@ -73,11 +93,17 @@ fn cron_command(line: &str) -> Option<String> {
         return None;
     }
 
-    let command_index = if fields.len() >= 7 && !fields[5].contains('/') && !fields[5].contains('*') {
+    let command_index = if fields.len() >= 7 && !fields[5].contains('/') && !fields[5].contains('*')
+    {
         6
     } else {
         5
     };
 
-    Some(line.split_whitespace().skip(command_index).collect::<Vec<_>>().join(" "))
+    Some(
+        line.split_whitespace()
+            .skip(command_index)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }

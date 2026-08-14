@@ -58,7 +58,9 @@ pub fn parse_args(args: Vec<String>) -> Result<Options, String> {
             }
             "-a" | "/a" => {
                 index += 1;
-                let selectors = args.get(index).ok_or("missing category selector after -a")?;
+                let selectors = args
+                    .get(index)
+                    .ok_or("missing category selector after -a")?;
                 options.categories = parse_categories(selectors)?;
                 index += 1;
             }
@@ -180,7 +182,19 @@ mod tests {
 
     #[test]
     fn parses_multiple_categories() {
-        let options = parse_args(vec!["autoruns".to_string(), "-a".to_string(), "lst".to_string()]).unwrap();
-        assert_eq!(options.categories, vec![Category::Logon, Category::Services, Category::ScheduledTasks]);
+        let options = parse_args(vec![
+            "autoruns".to_string(),
+            "-a".to_string(),
+            "lst".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.categories,
+            vec![
+                Category::Logon,
+                Category::Services,
+                Category::ScheduledTasks
+            ]
+        );
     }
 }

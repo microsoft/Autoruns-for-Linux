@@ -165,15 +165,22 @@ Initial Linux selector mapping:
 | --- | --- | --- |
 | Repo/fork workflow | Ready | Upstream is unarchived. Fork remote is configured as `origin`; Microsoft repo is configured as `upstream`. |
 | Local branch | Done | Created `initial-rust-implementation` locally from `main`; current changes are on that branch. |
-| Rust toolchain | Blocked locally | `cargo` and `rustc` are not installed or not on PATH in this Windows environment. |
+| Rust toolchain | Done | Installed via rustup (cargo 1.97) with gcc/libc6-dev for linking in the Linux dev environment. |
 | Planning | Done for initial slice | This document created from local Windows AutoRuns source and Sysinternals-jcd patterns. |
-| Implementation | In progress | Added initial Cargo project, CLI parser, model, output writers, and Linux scanners for XDG autostart, shell startup, systemd, cron, boot hooks, module load config, loader hooks, and network hooks. |
-| Validation | Partial | Editor diagnostics report no errors and `git diff --check` passes. Cargo build/test blocked until Rust is installed. |
+| Implementation | Done for initial slice | Cargo project, CLI parser, model, output writers, and Linux scanners for XDG autostart, shell startup, systemd services/timers, cron, boot hooks, module load config, loader hooks, and network hooks. |
+| Validation | Done | `cargo build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` all pass. Added `tests/smoke.rs` with fixture-based `--root` integration tests (9 tests total). |
+| CI pipeline | Done for initial slice | Added `azure-pipelines.yml` + `templates/build.yaml` following the Sysinternals-jcd pattern (shared repo resource + reusable build template, `ubuntu-24.04` pool, build/fmt/clippy/test steps). |
 
 ## Immediate next steps
 
-1. Install Rust or run validation in a Linux build environment.
-2. Run `cargo fmt`, `cargo test`, and `cargo run -- --help`.
-3. Add fixture-based tests for `--root` scanner behavior.
-4. Decide whether Azure Pipelines should use a plain Rust job or an internal Sysinternals shared template.
-5. Add signature/publisher strategy for Linux package and binary trust metadata.
+1. Wire the `sysinternals` GitHub service connection / shared template repo in Azure DevOps so the pipeline resource resolves.
+2. Add signature/publisher strategy for Linux package and binary trust metadata.
+3. Add hashing/publisher enrichment (Phase 2) and JSON schema regression fixtures.
+4. Add deb/rpm packaging scripts (Phase 3), reusing the jcd `makePackages.sh` approach.
+
+Completed since last update:
+
+- Installed the Rust toolchain in the Linux environment and confirmed the project builds.
+- Ran `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `cargo run -- --help`.
+- Added `tests/smoke.rs` with fixture-based `--root` integration tests covering every implemented scanner category and each output format.
+- Added the Azure Pipelines definition and reusable build template modeled on Sysinternals-jcd.

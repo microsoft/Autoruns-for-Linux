@@ -1,6 +1,11 @@
-use crate::{cli::Options, model::{AutorunEntry, Category, EntryStatus}};
+use crate::{
+    cli::Options,
+    model::{AutorunEntry, Category, EntryStatus},
+};
 
-use super::{display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted};
+use super::{
+    display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted,
+};
 
 pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -17,7 +22,11 @@ pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
                 let mut entry = AutorunEntry::new(
                     Category::Services,
                     module.to_string(),
-                    format!("{}:{}", display_location(&path, &options.root), line_number + 1),
+                    format!(
+                        "{}:{}",
+                        display_location(&path, &options.root),
+                        line_number + 1
+                    ),
                     path.clone(),
                 );
                 entry.status = EntryStatus::Enabled;
@@ -32,9 +41,17 @@ pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
 
 pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
-    for path in [rooted(options, "/etc/rc.local"), rooted(options, "/etc/init.d/rc.local")] {
+    for path in [
+        rooted(options, "/etc/rc.local"),
+        rooted(options, "/etc/init.d/rc.local"),
+    ] {
         if path.exists() {
-            let mut entry = AutorunEntry::new(Category::Boot, "rc.local", display_location(&path, &options.root), path.clone());
+            let mut entry = AutorunEntry::new(
+                Category::Boot,
+                "rc.local",
+                display_location(&path, &options.root),
+                path.clone(),
+            );
             entry.command = Some(path.display().to_string());
             entry.image_path = Some(path.clone());
             entry.status = EntryStatus::Enabled;
@@ -45,7 +62,10 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
     for script in list_files(&rooted(options, "/etc/init.d")) {
         let mut entry = AutorunEntry::new(
             Category::Boot,
-            script.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "init script".to_string()),
+            script
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "init script".to_string()),
             display_location(&script, &options.root),
             script.clone(),
         );
@@ -66,7 +86,9 @@ pub fn scan_hijacks(options: &Options) -> Vec<AutorunEntry> {
     for path in list_files(&rooted(options, "/etc/alternatives")) {
         let mut entry = AutorunEntry::new(
             Category::Hijacks,
-            path.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "alternative".to_string()),
+            path.file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "alternative".to_string()),
             display_location(&path, &options.root),
             path.clone(),
         );
@@ -91,7 +113,11 @@ pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
             let mut entry = AutorunEntry::new(
                 Category::Loader,
                 value.to_string(),
-                format!("{}:{}", display_location(&preload, &options.root), line_number + 1),
+                format!(
+                    "{}:{}",
+                    display_location(&preload, &options.root),
+                    line_number + 1
+                ),
                 preload.clone(),
             );
             entry.image_path = Some(std::path::PathBuf::from(value));
@@ -105,7 +131,9 @@ pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
     for file in list_files(&rooted(options, "/etc/ld.so.conf.d")) {
         let mut entry = AutorunEntry::new(
             Category::Loader,
-            file.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "ld config".to_string()),
+            file.file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "ld config".to_string()),
             display_location(&file, &options.root),
             file.clone(),
         );
@@ -130,7 +158,10 @@ pub fn scan_network(options: &Options) -> Vec<AutorunEntry> {
         for script in list_files(&rooted(options, dir)) {
             let mut entry = AutorunEntry::new(
                 Category::Network,
-                script.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "network hook".to_string()),
+                script
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "network hook".to_string()),
                 display_location(&script, &options.root),
                 script.clone(),
             );

@@ -36,7 +36,11 @@ fn main() -> ExitCode {
         add_hashes(&mut entries);
     }
 
-    if options.hide_microsoft || options.verify_signatures || options.show_unsigned_only || options.virus_total_check {
+    if options.hide_microsoft
+        || options.verify_signatures
+        || options.show_unsigned_only
+        || options.virus_total_check
+    {
         entries.push(AutorunEntry::unsupported(
             model::Category::Unsupported,
             "Windows-compatible trust filtering",

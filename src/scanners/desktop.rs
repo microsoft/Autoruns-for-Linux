@@ -1,8 +1,14 @@
 use std::collections::HashMap;
 
-use crate::{cli::Options, model::{AutorunEntry, Category, EntryStatus}};
+use crate::{
+    cli::Options,
+    model::{AutorunEntry, Category, EntryStatus},
+};
 
-use super::{display_location, first_command_path, list_dirs, list_files, modified_timestamp, read_to_string, rooted};
+use super::{
+    display_location, first_command_path, list_dirs, list_files, modified_timestamp,
+    read_to_string, rooted,
+};
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -12,7 +18,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         dirs.push(home.join(".config/autostart"));
     }
 
-    if options.root == std::path::PathBuf::from("/") {
+    if options.root == std::path::Path::new("/") {
         if let Ok(home) = std::env::var("HOME") {
             dirs.push(std::path::PathBuf::from(home).join(".config/autostart"));
         }
@@ -37,7 +43,10 @@ fn parse_desktop_entry(options: &Options, path: &std::path::Path, content: &str)
     let name = values
         .get("Name")
         .cloned()
-        .or_else(|| path.file_stem().map(|value| value.to_string_lossy().to_string()))
+        .or_else(|| {
+            path.file_stem()
+                .map(|value| value.to_string_lossy().to_string())
+        })
         .unwrap_or_else(|| "desktop autostart".to_string());
     let command = values.get("Exec").cloned();
 
@@ -51,7 +60,11 @@ fn parse_desktop_entry(options: &Options, path: &std::path::Path, content: &str)
     entry.command = command.clone();
     entry.image_path = command.as_deref().and_then(first_command_path);
     entry.timestamp = modified_timestamp(path);
-    entry.status = if values.get("Hidden").map(|value| value.eq_ignore_ascii_case("true")).unwrap_or(false) {
+    entry.status = if values
+        .get("Hidden")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
         EntryStatus::Disabled
     } else {
         EntryStatus::Enabled

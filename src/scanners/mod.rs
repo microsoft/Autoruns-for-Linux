@@ -4,7 +4,10 @@ mod linux;
 mod shell;
 mod systemd;
 
-use crate::{cli::Options, model::{AutorunEntry, Category}};
+use crate::{
+    cli::Options,
+    model::{AutorunEntry, Category},
+};
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -58,7 +61,11 @@ pub(crate) fn list_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(dir) {
         for entry in read_dir.flatten() {
-            if entry.file_type().map(|kind| kind.is_file() || kind.is_symlink()).unwrap_or(false) {
+            if entry
+                .file_type()
+                .map(|kind| kind.is_file() || kind.is_symlink())
+                .unwrap_or(false)
+            {
                 files.push(entry.path());
             }
         }

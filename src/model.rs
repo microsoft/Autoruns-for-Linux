@@ -80,7 +80,12 @@ pub struct AutorunEntry {
 }
 
 impl AutorunEntry {
-    pub fn new(category: Category, name: impl Into<String>, location: impl Into<String>, source_path: PathBuf) -> Self {
+    pub fn new(
+        category: Category,
+        name: impl Into<String>,
+        location: impl Into<String>,
+        source_path: PathBuf,
+    ) -> Self {
         Self {
             category,
             name: name.into(),
@@ -97,7 +102,11 @@ impl AutorunEntry {
         }
     }
 
-    pub fn unsupported(category: Category, name: impl Into<String>, note: impl Into<String>) -> Self {
+    pub fn unsupported(
+        category: Category,
+        name: impl Into<String>,
+        note: impl Into<String>,
+    ) -> Self {
         Self {
             category,
             name: name.into(),

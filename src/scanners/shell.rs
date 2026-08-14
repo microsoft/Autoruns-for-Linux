@@ -1,4 +1,7 @@
-use crate::{cli::Options, model::{AutorunEntry, Category, EntryStatus}};
+use crate::{
+    cli::Options,
+    model::{AutorunEntry, Category, EntryStatus},
+};
 
 use super::{display_location, list_dirs, list_files, modified_timestamp, rooted};
 
@@ -12,7 +15,14 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     files.extend(list_files(&rooted(options, "/etc/profile.d")));
 
     for home in list_dirs(&rooted(options, "/home")) {
-        for name in [".profile", ".bash_profile", ".bash_login", ".bashrc", ".zprofile", ".zshrc"] {
+        for name in [
+            ".profile",
+            ".bash_profile",
+            ".bash_login",
+            ".bashrc",
+            ".zprofile",
+            ".zshrc",
+        ] {
             files.push(home.join(name));
         }
     }
@@ -21,7 +31,9 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     for file in files.into_iter().filter(|path| path.is_file()) {
         let mut entry = AutorunEntry::new(
             Category::Logon,
-            file.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "shell startup".to_string()),
+            file.file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "shell startup".to_string()),
             display_location(&file, &options.root),
             file.clone(),
         );

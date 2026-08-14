@@ -1,0 +1,38 @@
+# Azure build pipeline for Sysinternals Autoruns for Linux.
+#
+# Follows the Sysinternals-jcd pipeline pattern: a thin top-level pipeline that
+# checks out the repository through the shared Sysinternals GitHub service
+# connection and delegates the build/test work to a reusable template.
+
+trigger:
+  branches:
+    include:
+      - release/*
+      - main
+    exclude:
+      - dev/*
+      - test/*
+
+resources:
+  repositories:
+    - repository: SysinternalsAutoruns
+      type: github
+      name: microsoft/Autoruns-for-Linux
+      endpoint: sysinternals
+
+pr:
+- main
+
+stages:
+- stage: "Build"
+  jobs:
+  - job: "Build_autoruns_24_04"
+    pool:
+      vmImage: "ubuntu-24.04"
+    steps:
+    - checkout: SysinternalsAutoruns
+      persistCredentials: true
+
+    - template: templates/build.yaml
+      parameters:
+        srcPath: '.'
