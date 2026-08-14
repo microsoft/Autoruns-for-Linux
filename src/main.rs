@@ -79,6 +79,13 @@ fn main() -> ExitCode {
 fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
     for entry in entries {
         if let Some(path) = entry.image_path.as_ref() {
+            // Only hash absolute in-image paths. A relative image path (e.g. a
+            // unit or cron entry that runs `bash` rather than `/bin/bash`) must
+            // not be resolved against the current working directory, which could
+            // hash an unrelated host file outside the scanned --root.
+            if !path.is_absolute() {
+                continue;
+            }
             let candidate = resolve_under_root(&options.root, path);
             if candidate.is_file() {
                 entry.sha256 = sha256_file(&candidate).ok();
