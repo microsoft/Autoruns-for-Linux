@@ -149,18 +149,25 @@ fn resolve_under_root(root: &std::path::Path, path: &std::path::Path) -> std::pa
 fn sha256_file(path: &std::path::Path) -> std::io::Result<String> {
     use std::process::Command;
 
-    let output = Command::new("sha256sum").arg(path).output();
-    if let Ok(output) = output {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            if let Some(hash) = text.split_whitespace().next() {
-                return Ok(hash.to_string());
-            }
-        }
+    // Propagate the real spawn error (e.g. NotFound when `sha256sum` is not
+    // installed) rather than masking every failure as "command unavailable".
+    let output = Command::new("sha256sum").arg(path).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "sha256sum failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "sha256sum command is unavailable",
-    ))
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(|hash| hash.to_string())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "sha256sum produced no output",
+            )
+        })
 }
