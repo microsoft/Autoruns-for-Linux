@@ -3,7 +3,9 @@ use crate::{
     model::{AutorunEntry, Category, EntryStatus},
 };
 
-use super::{display_location, list_files, modified_timestamp, read_to_string, rooted};
+use super::{
+    display_location, in_root_path, list_files, modified_timestamp, read_to_string, rooted,
+};
 
 pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
@@ -50,8 +52,9 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
                 display_location(&path, &options.root),
                 path.clone(),
             );
-            entry.command = Some(path.display().to_string());
-            entry.image_path = Some(path.clone());
+            let in_image = in_root_path(&path, &options.root);
+            entry.command = Some(in_image.display().to_string());
+            entry.image_path = Some(in_image);
             entry.status = EntryStatus::Enabled;
             entry.timestamp = modified_timestamp(&path);
             entries.push(entry);
@@ -67,8 +70,9 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
             display_location(&script, &options.root),
             script.clone(),
         );
-        entry.command = Some(script.display().to_string());
-        entry.image_path = Some(script.clone());
+        let in_image = in_root_path(&script, &options.root);
+        entry.command = Some(in_image.display().to_string());
+        entry.image_path = Some(in_image);
         entry.status = EntryStatus::Unknown;
         entry.timestamp = modified_timestamp(&script);
         entry.note = Some("SysV init script; enabled state depends on rc.d links".to_string());
@@ -163,8 +167,9 @@ pub fn scan_network(options: &Options) -> Vec<AutorunEntry> {
                 display_location(&script, &options.root),
                 script.clone(),
             );
-            entry.command = Some(script.display().to_string());
-            entry.image_path = Some(script.clone());
+            let in_image = in_root_path(&script, &options.root);
+            entry.command = Some(in_image.display().to_string());
+            entry.image_path = Some(in_image);
             entry.status = EntryStatus::Enabled;
             entry.timestamp = modified_timestamp(&script);
             entries.push(entry);

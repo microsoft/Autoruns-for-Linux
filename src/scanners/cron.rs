@@ -4,7 +4,8 @@ use crate::{
 };
 
 use super::{
-    display_location, first_command_path, list_files, modified_timestamp, read_to_string, rooted,
+    display_location, first_command_path, in_root_path, list_files, modified_timestamp,
+    read_to_string, rooted,
 };
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
@@ -35,8 +36,9 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
                 display_location(&script, &options.root),
                 script.clone(),
             );
-            entry.image_path = Some(script.clone());
-            entry.command = Some(script.display().to_string());
+            let in_image = in_root_path(&script, &options.root);
+            entry.image_path = Some(in_image.clone());
+            entry.command = Some(in_image.display().to_string());
             entry.status = EntryStatus::Enabled;
             entry.timestamp = modified_timestamp(&script);
             entry.note = Some("run-parts cron directory".to_string());

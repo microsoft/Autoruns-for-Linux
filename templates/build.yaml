@@ -27,8 +27,9 @@ steps:
         export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    # Hosted ubuntu images ship rustup/cargo; install a minimal toolchain if missing.
-    if ! command -v cargo >/dev/null 2>&1; then
+    # Hosted ubuntu images ship rustup; install it if missing so both cargo and
+    # the rustup components used by static analysis are available.
+    if ! command -v rustup >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
     fi
     . "$HOME/.cargo/env" 2>/dev/null || true

@@ -3,7 +3,7 @@ use crate::{
     model::{AutorunEntry, Category, EntryStatus},
 };
 
-use super::{display_location, list_dirs, list_files, modified_timestamp, rooted};
+use super::{display_location, in_root_path, list_dirs, list_files, modified_timestamp, rooted};
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut files = vec![
@@ -37,8 +37,9 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
             display_location(&file, &options.root),
             file.clone(),
         );
-        entry.command = Some(file.display().to_string());
-        entry.image_path = Some(file.clone());
+        let in_image = in_root_path(&file, &options.root);
+        entry.command = Some(in_image.display().to_string());
+        entry.image_path = Some(in_image);
         entry.status = EntryStatus::Enabled;
         entry.timestamp = modified_timestamp(&file);
         entry.note = Some("shell startup file; inspect contents for commands".to_string());

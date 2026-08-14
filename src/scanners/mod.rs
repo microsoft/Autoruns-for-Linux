@@ -88,38 +88,63 @@ pub(crate) fn list_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 pub(crate) fn first_command_path(command: &str) -> Option<std::path::PathBuf> {
-    let token = first_shell_token(command)?;
-    if token.contains('=') && !token.contains('/') {
-        return None;
-    }
-    Some(std::path::PathBuf::from(token))
+    shell_tokens(command)
+        .into_iter()
+        .find(|token| !is_env_assignment(token))
+        .map(std::path::PathBuf::from)
 }
 
-fn first_shell_token(command: &str) -> Option<String> {
+fn is_env_assignment(token: &str) -> bool {
+    match token.find('=') {
+        Some(position) if position > 0 => {
+            let key = &token[..position];
+            key.starts_with(|first: char| first.is_ascii_alphabetic() || first == '_')
+                && key
+                    .chars()
+                    .all(|value| value.is_ascii_alphanumeric() || value == '_')
+        }
+        _ => false,
+    }
+}
+
+fn shell_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
     let mut token = String::new();
-    let mut chars = command.trim().chars().peekable();
+    let mut has_token = false;
+    let mut chars = command.trim().chars();
     let mut quote = None;
 
     while let Some(character) = chars.next() {
         match (quote, character) {
-            (None, '#') if token.is_empty() => return None,
-            (None, '\'') | (None, '"') => quote = Some(character),
+            (None, '#') if !has_token => break,
+            (None, '\'') | (None, '"') => {
+                quote = Some(character);
+                has_token = true;
+            }
             (Some(current), value) if value == current => quote = None,
-            (None, value) if value.is_whitespace() => break,
+            (None, value) if value.is_whitespace() => {
+                if has_token {
+                    tokens.push(std::mem::take(&mut token));
+                    has_token = false;
+                }
+            }
             (_, '\\') => {
                 if let Some(next) = chars.next() {
                     token.push(next);
+                    has_token = true;
                 }
             }
-            (_, value) => token.push(value),
+            (_, value) => {
+                token.push(value);
+                has_token = true;
+            }
         }
     }
 
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
+    if has_token {
+        tokens.push(token);
     }
+    tokens
 }
 
 pub(crate) fn modified_timestamp(path: &std::path::Path) -> Option<String> {
@@ -133,4 +158,14 @@ pub(crate) fn display_location(path: &std::path::Path, root: &std::path::Path) -
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+// Converts a rooted host path (under --root) back to its absolute path inside
+// the scanned filesystem, so image_path/command stay independent of where the
+// root is mounted. A no-op when scanning the live root.
+pub(crate) fn in_root_path(path: &std::path::Path, root: &std::path::Path) -> std::path::PathBuf {
+    match path.strip_prefix(root) {
+        Ok(relative) => std::path::Path::new("/").join(relative),
+        Err(_) => path.to_path_buf(),
+    }
 }
