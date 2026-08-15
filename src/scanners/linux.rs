@@ -49,7 +49,10 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
         rooted(options, "/etc/rc.local"),
         rooted(options, "/etc/init.d/rc.local"),
     ] {
-        if resolve_in_root(&options.root, &path).exists() {
+        if resolve_in_root(&options.root, &path)
+            .map(|resolved| resolved.exists())
+            .unwrap_or(false)
+        {
             let mut entry = AutorunEntry::new(
                 Category::Boot,
                 "rc.local",

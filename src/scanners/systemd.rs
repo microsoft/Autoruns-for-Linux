@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     display_location, first_command_path, list_dirs, list_files, modified_timestamp,
-    read_to_string, rooted,
+    read_to_string, resolve_in_root, rooted,
 };
 
 pub fn scan_services(options: &Options) -> Vec<AutorunEntry> {
@@ -184,7 +184,13 @@ fn enabled_unit_names(
             if !is_wants {
                 continue;
             }
-            if let Ok(read_dir) = std::fs::read_dir(&dir) {
+            // Resolve the wants directory under --root before listing it: it may
+            // be an absolute symlink that would otherwise be followed against the
+            // host filesystem when scanning a non-default root.
+            let Some(resolved) = resolve_in_root(&options.root, &dir) else {
+                continue;
+            };
+            if let Ok(read_dir) = std::fs::read_dir(resolved) {
                 for entry in read_dir.flatten() {
                     if entry
                         .file_type()

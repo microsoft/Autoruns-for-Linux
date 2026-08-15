@@ -45,10 +45,11 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     files.dedup();
 
     let mut entries = Vec::new();
-    for file in files
-        .into_iter()
-        .filter(|path| resolve_in_root(&options.root, path).is_file())
-    {
+    for file in files.into_iter().filter(|path| {
+        resolve_in_root(&options.root, path)
+            .map(|resolved| resolved.is_file())
+            .unwrap_or(false)
+    }) {
         let mut entry = AutorunEntry::new(
             Category::Logon,
             file.file_name()

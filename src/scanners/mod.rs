@@ -54,7 +54,7 @@ pub(crate) fn rooted(options: &Options, relative: &str) -> std::path::PathBuf {
 }
 
 pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(resolve_in_root(root, path)).ok()
+    resolve_in_root(root, path).and_then(|resolved| std::fs::read_to_string(resolved).ok())
 }
 
 pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -62,14 +62,16 @@ pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<s
     // Resolve `dir` first so a symlinked directory (e.g. a usrmerge /lib ->
     // /usr/lib) cannot make `read_dir` follow an absolute link out to the host
     // when scanning a non-default --root.
-    if let Ok(read_dir) = std::fs::read_dir(resolve_in_root(root, dir)) {
-        for entry in read_dir.flatten() {
-            if entry
-                .file_type()
-                .map(|kind| kind.is_file() || kind.is_symlink())
-                .unwrap_or(false)
-            {
-                files.push(entry.path());
+    if let Some(resolved) = resolve_in_root(root, dir) {
+        if let Ok(read_dir) = std::fs::read_dir(resolved) {
+            for entry in read_dir.flatten() {
+                if entry
+                    .file_type()
+                    .map(|kind| kind.is_file() || kind.is_symlink())
+                    .unwrap_or(false)
+                {
+                    files.push(entry.path());
+                }
             }
         }
     }
@@ -79,10 +81,23 @@ pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<s
 
 pub(crate) fn list_dirs(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(resolve_in_root(root, dir)) {
-        for entry in read_dir.flatten() {
-            if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                dirs.push(entry.path());
+    if let Some(resolved) = resolve_in_root(root, dir) {
+        if let Ok(read_dir) = std::fs::read_dir(resolved) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                // Include symlinks whose target (resolved under --root) is a
+                // directory, e.g. a relocated home or usrmerge-style layout, so
+                // scanners that rely on `list_dirs` do not silently skip them.
+                let is_dir = match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => true,
+                    Ok(kind) if kind.is_symlink() => resolve_in_root(root, &path)
+                        .map(|resolved| resolved.is_dir())
+                        .unwrap_or(false),
+                    _ => false,
+                };
+                if is_dir {
+                    dirs.push(path);
+                }
             }
         }
     }
@@ -170,7 +185,7 @@ fn shell_tokens(command: &str) -> Vec<String> {
 }
 
 pub(crate) fn modified_timestamp(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
-    let modified = std::fs::metadata(resolve_in_root(root, path))
+    let modified = std::fs::metadata(resolve_in_root(root, path)?)
         .ok()?
         .modified()
         .ok()?;
@@ -209,32 +224,55 @@ const MAX_SYMLINK_HOPS: usize = 40;
 // link such as /etc/systemd/system/default.target -> /lib/... reads the in-image
 // file, and a crafted relative link like ../../etc/shadow cannot climb out of
 // the image onto the host.
+//
+// Fails closed (returns `None`) when the target cannot be determined safely: a
+// symlink chain longer than `MAX_SYMLINK_HOPS` (or a cycle), or a `read_link`
+// error other than "not a symlink"/"not found". Returning the partially
+// resolved path in those cases would let the OS follow a residual symlink out
+// of the image on the next filesystem call, so callers get nothing instead.
 pub(crate) fn resolve_in_root(
     root: &std::path::Path,
     path: &std::path::Path,
-) -> std::path::PathBuf {
+) -> Option<std::path::PathBuf> {
     if root == std::path::Path::new("/") {
-        return path.to_path_buf();
+        return Some(path.to_path_buf());
     }
     // Track the current location as an absolute in-image path so `..` can be
     // collapsed and clamped to the root; re-anchor under `root` for each fs op.
     let mut in_image = normalize_in_image(&in_root_path(path, root));
     for _ in 0..MAX_SYMLINK_HOPS {
         let host = anchor_under_root(root, &in_image);
-        let target = match std::fs::read_link(&host) {
-            Ok(target) => target,
-            Err(_) => break, // not a symlink (or unreadable): stop here
-        };
-        in_image = if target.is_absolute() {
-            normalize_in_image(&target)
-        } else {
-            let parent = in_image
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("/"));
-            normalize_in_image(&parent.join(target))
-        };
+        match std::fs::read_link(&host) {
+            Ok(target) => {
+                in_image = if target.is_absolute() {
+                    normalize_in_image(&target)
+                } else {
+                    let parent = in_image
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("/"));
+                    normalize_in_image(&parent.join(target))
+                };
+            }
+            // EINVAL ("not a symlink") and ENOENT ("no such path") both mean
+            // there is nothing left to follow: the path is fully resolved and
+            // safe to return.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::InvalidInput | std::io::ErrorKind::NotFound
+                ) =>
+            {
+                return Some(host);
+            }
+            // Any other error (e.g. PermissionDenied) leaves the target
+            // undetermined: fail closed rather than hand back a path the OS
+            // might follow out of the image.
+            Err(_) => return None,
+        }
     }
-    anchor_under_root(root, &in_image)
+    // Exhausted the hop limit: a chain this long is either malicious or cyclic,
+    // so fail closed instead of returning a path that still points at a symlink.
+    None
 }
 
 // Lexically collapses `.`/`..` in an in-image path, dropping any `..` that would

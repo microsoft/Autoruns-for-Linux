@@ -197,6 +197,42 @@ fn enabled_systemd_unit_is_reported_enabled() {
 }
 
 #[test]
+fn symlinked_wants_directory_reports_enabled_unit() {
+    // A `*.wants` directory that is itself an absolute in-image symlink must be
+    // discovered by list_dirs and listed under --root (not followed to the
+    // host), so the unit it enables is still reported enabled.
+    let root = TempRoot::new();
+    root.write(
+        "etc/systemd/system/linked.service",
+        "[Unit]\nDescription=Linked Service\n\n[Service]\nExecStart=/usr/bin/linked --serve\n\n[Install]\nWantedBy=multi-user.target\n",
+    );
+    // The real wants directory lives at /realwants and holds the enablement
+    // symlink for linked.service.
+    root.symlink(
+        "etc/systemd/system/linked.service",
+        "realwants/linked.service",
+    );
+    // /etc/systemd/system/multi-user.target.wants -> /realwants (absolute).
+    let link = root
+        .path()
+        .join("etc/systemd/system/multi-user.target.wants");
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    unix_fs::symlink("/realwants", &link).expect("create absolute wants symlink");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "s", "--root", &root_arg, "-c"]);
+
+    let line = stdout
+        .lines()
+        .find(|line| line.contains("linked.service"))
+        .expect("service line present");
+    assert!(
+        line.contains("enabled"),
+        "unit enabled via a symlinked wants directory should be reported enabled: {line}"
+    );
+}
+
+#[test]
 fn absolute_symlink_is_reanchored_under_root() {
     // A scanned config that is an absolute symlink inside the image must be read
     // from the in-image target, never followed out to the host filesystem.
