@@ -119,7 +119,13 @@ fn parse_unit(
 fn parse_unit_values(content: &str) -> HashMap<String, String> {
     let mut values = HashMap::new();
     for line in content.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+        // systemd treats a leading '#' or ';' as a full-line comment, so skip
+        // both; inline ';' is not a comment and stays part of the value.
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with(';')
+            || line.starts_with('[')
+        {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {

@@ -220,11 +220,11 @@ fn escape_delimited(value: &str, delimiter: char) -> String {
 }
 
 // Guards CSV/TSV exports against spreadsheet formula injection. A cell whose
-// first character is one Excel/LibreOffice may treat as the start of a formula
-// (`=`, `+`, `-`, `@`, or a leading tab/carriage return) is prefixed with a
-// single quote so the spreadsheet renders it as literal text. Scanned fields
-// (paths, commands, desktop-entry names) come from untrusted filesystem content,
-// so exported reports must be safe to open.
+// first character is one that Excel/LibreOffice may treat as the start of a
+// formula (`=`, `+`, `-`, `@`, or a leading tab/carriage return) is prefixed
+// with a single quote so the spreadsheet renders it as literal text. Scanned
+// fields (paths, commands, desktop-entry names) come from untrusted filesystem
+// content, so exported reports must be safe to open.
 fn neutralize_formula(value: &str) -> String {
     match value.chars().next() {
         Some('=') | Some('+') | Some('-') | Some('@') | Some('\t') | Some('\r') => {
