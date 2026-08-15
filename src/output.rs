@@ -207,6 +207,7 @@ fn write_record<S: AsRef<str>>(output: &mut String, delimiter: char, values: &[S
 }
 
 fn escape_delimited(value: &str, delimiter: char) -> String {
+    let value = neutralize_formula(value);
     if value.contains(delimiter)
         || value.contains('"')
         || value.contains('\n')
@@ -214,7 +215,25 @@ fn escape_delimited(value: &str, delimiter: char) -> String {
     {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
-        value.to_string()
+        value
+    }
+}
+
+// Guards CSV/TSV exports against spreadsheet formula injection. A cell whose
+// first character is one Excel/LibreOffice may treat as the start of a formula
+// (`=`, `+`, `-`, `@`, or a leading tab/carriage return) is prefixed with a
+// single quote so the spreadsheet renders it as literal text. Scanned fields
+// (paths, commands, desktop-entry names) come from untrusted filesystem content,
+// so exported reports must be safe to open.
+fn neutralize_formula(value: &str) -> String {
+    match value.chars().next() {
+        Some('=') | Some('+') | Some('-') | Some('@') | Some('\t') | Some('\r') => {
+            let mut safe = String::with_capacity(value.len() + 1);
+            safe.push('\'');
+            safe.push_str(value);
+            safe
+        }
+        _ => value.to_string(),
     }
 }
 
@@ -281,4 +300,38 @@ fn escape_xml(value: &str) -> String {
         }
     }
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_delimited;
+
+    #[test]
+    fn neutralizes_spreadsheet_formula_prefixes() {
+        for value in ["=cmd()", "+1", "-1", "@SUM(A1)", "\tformula", "\rformula"] {
+            let escaped = escape_delimited(value, ',');
+            // The leading quote may itself be inside CSV quoting, so just assert
+            // the neutralizing apostrophe precedes the original content.
+            let unquoted = escaped.trim_matches('"');
+            assert!(
+                unquoted.starts_with('\''),
+                "value {value:?} should be neutralized, got {escaped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_ordinary_values_unquoted_and_unchanged() {
+        assert_eq!(
+            escape_delimited("/usr/bin/example", ','),
+            "/usr/bin/example"
+        );
+        assert_eq!(escape_delimited("Example Name", ','), "Example Name");
+    }
+
+    #[test]
+    fn still_quotes_embedded_delimiters_and_quotes() {
+        assert_eq!(escape_delimited("a,b", ','), "\"a,b\"");
+        assert_eq!(escape_delimited("a\"b", ','), "\"a\"\"b\"");
+    }
 }

@@ -218,18 +218,19 @@ const MAX_SYMLINK_HOPS: usize = 40;
 // non-default `--root`. Scanning the live root ("/") is a passthrough: normal
 // symlink following is correct there because the host *is* the scanned image
 // (enabled systemd units, /bin/sh, and many /etc entries are symlinks that must
-// be followed). Under an offline image root, resolution happens in in-image
-// ("/"-rooted) space: each symlink target is collapsed (`.`/`..` removed) and
-// clamped to the image root before being re-anchored under `root`. This means a
-// link such as /etc/systemd/system/default.target -> /lib/... reads the in-image
-// file, and a crafted relative link like ../../etc/shadow cannot climb out of
-// the image onto the host.
+// be followed). Under an offline image root, the path is resolved one component
+// at a time from the image root down: every component (not just the final one)
+// is checked with `read_link`, and any symlink it holds is expanded and clamped
+// to the image root before resolution continues. This means an intermediate
+// component such as a hostile `/etc -> /` or `/etc/systemd/system -> /lib/...`
+// is re-anchored under `root` instead of being followed onto the host, and a
+// relative link like ../../etc/shadow cannot climb out of the image.
 //
 // Fails closed (returns `None`) when the target cannot be determined safely: a
 // symlink chain longer than `MAX_SYMLINK_HOPS` (or a cycle), or a `read_link`
-// error other than "not a symlink"/"not found". Returning the partially
-// resolved path in those cases would let the OS follow a residual symlink out
-// of the image on the next filesystem call, so callers get nothing instead.
+// error other than "not a symlink"/"not found". Returning a partially resolved
+// path in those cases would let the OS follow a residual symlink out of the
+// image on the next filesystem call, so callers get nothing instead.
 pub(crate) fn resolve_in_root(
     root: &std::path::Path,
     path: &std::path::Path,
@@ -237,64 +238,74 @@ pub(crate) fn resolve_in_root(
     if root == std::path::Path::new("/") {
         return Some(path.to_path_buf());
     }
-    // Track the current location as an absolute in-image path so `..` can be
-    // collapsed and clamped to the root; re-anchor under `root` for each fs op.
-    let mut in_image = normalize_in_image(&in_root_path(path, root));
-    for _ in 0..MAX_SYMLINK_HOPS {
-        let host = anchor_under_root(root, &in_image);
+    // Queue of in-image path components still to resolve. Symlink expansions are
+    // pushed back onto the front so their own components are resolved in turn.
+    let mut pending: std::collections::VecDeque<std::ffi::OsString> =
+        components_of(&in_root_path(path, root));
+    // The symlink-free in-image prefix resolved so far (always absolute).
+    let mut resolved = std::path::PathBuf::from("/");
+    let mut hops = 0usize;
+    while let Some(part) = pending.pop_front() {
+        if part == std::ffi::OsStr::new(".") {
+            continue;
+        }
+        if part == std::ffi::OsStr::new("..") {
+            // Clamped: popping at the image root is a no-op, so `..` can never
+            // climb above "/".
+            resolved.pop();
+            continue;
+        }
+        let candidate = resolved.join(&part);
+        let host = anchor_under_root(root, &candidate);
         match std::fs::read_link(&host) {
-            Ok(target) => {
-                in_image = if target.is_absolute() {
-                    normalize_in_image(&target)
-                } else {
-                    let parent = in_image
-                        .parent()
-                        .unwrap_or_else(|| std::path::Path::new("/"));
-                    normalize_in_image(&parent.join(target))
-                };
+            Ok(link) => {
+                hops += 1;
+                if hops > MAX_SYMLINK_HOPS {
+                    // A chain this long is either malicious or cyclic: fail closed.
+                    return None;
+                }
+                // An absolute link restarts resolution from the image root; a
+                // relative link resolves against the already-resolved parent.
+                if link.is_absolute() {
+                    resolved = std::path::PathBuf::from("/");
+                }
+                for component in components_of(&link).into_iter().rev() {
+                    pending.push_front(component);
+                }
             }
-            // EINVAL ("not a symlink") and ENOENT ("no such path") both mean
-            // there is nothing left to follow: the path is fully resolved and
-            // safe to return.
+            // EINVAL ("not a symlink") and ENOENT ("no such path") both mean this
+            // component holds no link to follow: accept it and move on.
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::InvalidInput | std::io::ErrorKind::NotFound
                 ) =>
             {
-                return Some(host);
+                resolved = candidate;
             }
-            // Any other error (e.g. PermissionDenied) leaves the target
-            // undetermined: fail closed rather than hand back a path the OS
-            // might follow out of the image.
+            // Any other error (e.g. PermissionDenied) leaves the component
+            // undetermined: fail closed rather than risk following it out.
             Err(_) => return None,
         }
     }
-    // Exhausted the hop limit: a chain this long is either malicious or cyclic,
-    // so fail closed instead of returning a path that still points at a symlink.
-    None
+    Some(anchor_under_root(root, &resolved))
 }
 
-// Lexically collapses `.`/`..` in an in-image path, dropping any `..` that would
-// climb above the image root so the result is always an absolute path contained
-// within "/". Purely lexical: it does not touch the filesystem.
-fn normalize_in_image(path: &std::path::Path) -> std::path::PathBuf {
+// Extracts the ordinary path components (Normal, plus `.`/`..` preserved as
+// literals) so a resolver can process them one at a time. Root/prefix markers
+// are dropped because resolution always works in absolute in-image space.
+fn components_of(path: &std::path::Path) -> std::collections::VecDeque<std::ffi::OsString> {
     use std::path::Component;
-    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    let mut parts = std::collections::VecDeque::new();
     for component in path.components() {
         match component {
-            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
-            Component::ParentDir => {
-                parts.pop();
-            }
-            Component::Normal(part) => parts.push(part.to_os_string()),
+            Component::Normal(value) => parts.push_back(value.to_os_string()),
+            Component::CurDir => parts.push_back(std::ffi::OsString::from(".")),
+            Component::ParentDir => parts.push_back(std::ffi::OsString::from("..")),
+            Component::Prefix(_) | Component::RootDir => {}
         }
     }
-    let mut result = std::path::PathBuf::from("/");
-    for part in parts {
-        result.push(part);
-    }
-    result
+    parts
 }
 
 // Re-anchors an absolute path under `root` (e.g. /lib/x under /mnt/img becomes

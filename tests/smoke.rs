@@ -233,6 +233,28 @@ fn symlinked_wants_directory_reports_enabled_unit() {
 }
 
 #[test]
+fn intermediate_symlinked_component_is_reanchored_under_root() {
+    // A symlink in an *intermediate* path component (not just the final one),
+    // pointing at an absolute in-image path, must be re-anchored under --root so
+    // the read stays inside the image instead of following the link to the host.
+    let root = TempRoot::new();
+    root.write("realetc/ld.so.preload", "/opt/lib/viaintermediate.so\n");
+    // /etc -> /realetc (absolute, in-image). The scanned file /etc/ld.so.preload
+    // therefore traverses a symlinked directory component.
+    let link = root.path().join("etc");
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    unix_fs::symlink("/realetc", &link).expect("create absolute component symlink");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "k", "--root", &root_arg]);
+
+    assert!(
+        stdout.contains("viaintermediate.so"),
+        "symlinked intermediate component should be re-anchored under --root:\n{stdout}"
+    );
+}
+
+#[test]
 fn absolute_symlink_is_reanchored_under_root() {
     // A scanned config that is an absolute symlink inside the image must be read
     // from the in-image target, never followed out to the host filesystem.
