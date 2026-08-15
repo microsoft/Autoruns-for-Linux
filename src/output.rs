@@ -220,13 +220,15 @@ fn escape_delimited(value: &str, delimiter: char) -> String {
 }
 
 // Guards CSV/TSV exports against spreadsheet formula injection. A cell whose
-// first character is one that Excel/LibreOffice may treat as the start of a
-// formula (`=`, `+`, `-`, `@`, or a leading tab/carriage return) is prefixed
-// with a single quote so the spreadsheet renders it as literal text. Scanned
-// fields (paths, commands, desktop-entry names) come from untrusted filesystem
-// content, so exported reports must be safe to open.
+// first non-space character is one that Excel/LibreOffice may treat as the start
+// of a formula (`=`, `+`, `-`, `@`, or a leading tab/carriage return) is prefixed
+// with a single quote so the spreadsheet renders it as literal text. Leading
+// spaces are ignored when deciding, because some spreadsheets trim them and then
+// interpret a value like " =1+1" as a formula. Scanned fields (paths, commands,
+// desktop-entry names) come from untrusted filesystem content, so exported
+// reports must be safe to open.
 fn neutralize_formula(value: &str) -> String {
-    match value.chars().next() {
+    match value.trim_start_matches(' ').chars().next() {
         Some('=') | Some('+') | Some('-') | Some('@') | Some('\t') | Some('\r') => {
             let mut safe = String::with_capacity(value.len() + 1);
             safe.push('\'');
@@ -308,7 +310,16 @@ mod tests {
 
     #[test]
     fn neutralizes_spreadsheet_formula_prefixes() {
-        for value in ["=cmd()", "+1", "-1", "@SUM(A1)", "\tformula", "\rformula"] {
+        for value in [
+            "=cmd()",
+            "+1",
+            "-1",
+            "@SUM(A1)",
+            "\tformula",
+            "\rformula",
+            " =1+1",
+            "   -2",
+        ] {
             let escaped = escape_delimited(value, ',');
             // The leading quote may itself be inside CSV quoting, so just assert
             // the neutralizing apostrophe precedes the original content.
