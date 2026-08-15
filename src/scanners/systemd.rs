@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     cli::Options,
@@ -19,14 +19,18 @@ pub fn scan_timers(options: &Options) -> Vec<AutorunEntry> {
 }
 
 fn scan_units(options: &Options, extension: &str, category: Category) -> Vec<AutorunEntry> {
+    let dirs = unit_dirs(options);
+    // Walk every `*.wants` directory once up front so enablement is an O(1)
+    // lookup per unit instead of re-listing those directories for each unit.
+    let enabled = enabled_unit_names(options, &dirs);
     let mut entries = Vec::new();
-    for dir in unit_dirs(options) {
-        for path in list_files(&dir) {
+    for dir in &dirs {
+        for path in list_files(dir) {
             if path.extension().and_then(|value| value.to_str()) != Some(extension) {
                 continue;
             }
             if let Some(content) = read_to_string(&options.root, &path) {
-                entries.push(parse_unit(options, &path, &content, category));
+                entries.push(parse_unit(options, &path, &content, category, &enabled));
             }
         }
     }
@@ -61,6 +65,7 @@ fn parse_unit(
     path: &std::path::Path,
     content: &str,
     category: Category,
+    enabled: &HashSet<std::ffi::OsString>,
 ) -> AutorunEntry {
     let values = parse_unit_values(content);
     let name = path
@@ -88,7 +93,11 @@ fn parse_unit(
     entry.command = command.clone();
     entry.image_path = command.as_deref().and_then(first_command_path);
     entry.timestamp = modified_timestamp(&options.root, path);
-    entry.status = if is_enabled_unit(options, path) {
+    entry.status = if path
+        .file_name()
+        .map(|name| enabled.contains(name))
+        .unwrap_or(false)
+    {
         EntryStatus::Enabled
     } else {
         EntryStatus::Unknown
@@ -147,19 +156,16 @@ fn parse_unit_values(content: &str) -> HashMap<String, String> {
     values
 }
 
-fn is_enabled_unit(options: &Options, path: &std::path::Path) -> bool {
-    let Some(file_name) = path.file_name() else {
-        return false;
-    };
-
-    // Enablement symlinks live in `*.wants` directories. For units shipped under
-    // /usr/lib or /lib, those symlinks are created under a canonical enablement
-    // root — /etc/systemd/system for system units and /etc/systemd/user for user
-    // units — so the unit's own directory and both roots must be searched.
-    let mut bases: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(parent) = path.parent() {
-        bases.push(parent.to_path_buf());
-    }
+// Collects, once per scan, the file names that are enablement symlinks in any
+// `*.wants` directory under the scanned unit directories plus the canonical
+// enablement roots (/etc/systemd/system and /etc/systemd/user). Enablement is
+// represented specifically by symlinks, so regular files copied into a `*.wants`
+// directory are ignored.
+fn enabled_unit_names(
+    options: &Options,
+    dirs: &[std::path::PathBuf],
+) -> HashSet<std::ffi::OsString> {
+    let mut bases: Vec<std::path::PathBuf> = dirs.to_vec();
     for root in ["/etc/systemd/system", "/etc/systemd/user"] {
         let base = rooted(options, root);
         if !bases.contains(&base) {
@@ -167,22 +173,29 @@ fn is_enabled_unit(options: &Options, path: &std::path::Path) -> bool {
         }
     }
 
+    let mut names = HashSet::new();
     for base in bases {
         for dir in list_dirs(&base) {
-            if dir
+            let is_wants = dir
                 .extension()
                 .and_then(|value| value.to_str())
                 .map(|value| value.ends_with("wants"))
-                .unwrap_or(false)
-                && dir
-                    .join(file_name)
-                    .symlink_metadata()
-                    .map(|metadata| metadata.file_type().is_symlink())
-                    .unwrap_or(false)
-            {
-                return true;
+                .unwrap_or(false);
+            if !is_wants {
+                continue;
+            }
+            if let Ok(read_dir) = std::fs::read_dir(&dir) {
+                for entry in read_dir.flatten() {
+                    if entry
+                        .file_type()
+                        .map(|kind| kind.is_symlink())
+                        .unwrap_or(false)
+                    {
+                        names.insert(entry.file_name());
+                    }
+                }
             }
         }
     }
-    false
+    names
 }

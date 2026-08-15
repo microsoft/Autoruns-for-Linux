@@ -152,7 +152,9 @@ fn sha256_file(path: &std::path::Path) -> std::io::Result<String> {
 
     // Propagate the real spawn error (e.g. NotFound when `sha256sum` is not
     // installed) rather than masking every failure as "command unavailable".
-    let output = Command::new("sha256sum").arg(path).output()?;
+    // `--` terminates option parsing so a path beginning with `-` is not
+    // mistaken for a flag.
+    let output = Command::new("sha256sum").arg("--").arg(path).output()?;
     if !output.status.success() {
         return Err(std::io::Error::other(format!(
             "sha256sum failed ({}): {}",
