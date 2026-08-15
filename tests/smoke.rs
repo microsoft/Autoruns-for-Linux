@@ -218,6 +218,27 @@ fn absolute_symlink_is_reanchored_under_root() {
 }
 
 #[test]
+fn relative_dotdot_symlink_is_clamped_to_root() {
+    // A relative symlink whose `..` components would climb above the image root
+    // must be clamped inside the image, never resolved onto the host.
+    let root = TempRoot::new();
+    root.write("etc/payload.conf", "/opt/lib/clamped.so\n");
+    // `/etc/ld.so.preload` -> ../../../../etc/payload.conf. Without clamping this
+    // re-anchors to the host `/etc/payload.conf`; with clamping it stays in-image.
+    let link = root.path().join("etc/ld.so.preload");
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    unix_fs::symlink("../../../../etc/payload.conf", &link).expect("create relative symlink");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "k", "--root", &root_arg]);
+
+    assert!(
+        stdout.contains("clamped.so"),
+        "relative `..` symlink should be clamped to --root:\n{stdout}"
+    );
+}
+
+#[test]
 fn default_category_is_logon_only() {
     let root = TempRoot::new();
     populate(&root);

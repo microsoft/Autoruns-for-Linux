@@ -200,10 +200,12 @@ const MAX_SYMLINK_HOPS: usize = 40;
 // non-default `--root`. Scanning the live root ("/") is a passthrough: normal
 // symlink following is correct there because the host *is* the scanned image
 // (enabled systemd units, /bin/sh, and many /etc entries are symlinks that must
-// be followed). Under an offline image root, each symlink is resolved by hand
-// and any absolute target is re-anchored under `root`, so a link such as
-// /etc/systemd/system/default.target -> /lib/systemd/system/graphical.target
-// reads the in-image file rather than the host's.
+// be followed). Under an offline image root, resolution happens in in-image
+// ("/"-rooted) space: each symlink target is collapsed (`.`/`..` removed) and
+// clamped to the image root before being re-anchored under `root`. This means a
+// link such as /etc/systemd/system/default.target -> /lib/... reads the in-image
+// file, and a crafted relative link like ../../etc/shadow cannot climb out of
+// the image onto the host.
 pub(crate) fn resolve_in_root(
     root: &std::path::Path,
     path: &std::path::Path,
@@ -211,21 +213,47 @@ pub(crate) fn resolve_in_root(
     if root == std::path::Path::new("/") {
         return path.to_path_buf();
     }
-    let mut current = path.to_path_buf();
+    // Track the current location as an absolute in-image path so `..` can be
+    // collapsed and clamped to the root; re-anchor under `root` for each fs op.
+    let mut in_image = normalize_in_image(&in_root_path(path, root));
     for _ in 0..MAX_SYMLINK_HOPS {
-        let target = match std::fs::read_link(&current) {
+        let host = anchor_under_root(root, &in_image);
+        let target = match std::fs::read_link(&host) {
             Ok(target) => target,
             Err(_) => break, // not a symlink (or unreadable): stop here
         };
-        current = if target.is_absolute() {
-            anchor_under_root(root, &target)
-        } else if let Some(parent) = current.parent() {
-            parent.join(target)
+        in_image = if target.is_absolute() {
+            normalize_in_image(&target)
         } else {
-            anchor_under_root(root, &target)
+            let parent = in_image
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("/"));
+            normalize_in_image(&parent.join(target))
         };
     }
-    current
+    anchor_under_root(root, &in_image)
+}
+
+// Lexically collapses `.`/`..` in an in-image path, dropping any `..` that would
+// climb above the image root so the result is always an absolute path contained
+// within "/". Purely lexical: it does not touch the filesystem.
+fn normalize_in_image(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(part) => parts.push(part.to_os_string()),
+        }
+    }
+    let mut result = std::path::PathBuf::from("/");
+    for part in parts {
+        result.push(part);
+    }
+    result
 }
 
 // Re-anchors an absolute path under `root` (e.g. /lib/x under /mnt/img becomes
