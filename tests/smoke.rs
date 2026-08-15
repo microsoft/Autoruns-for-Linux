@@ -54,7 +54,10 @@ impl TempRoot {
         if let Some(parent) = link.parent() {
             fs::create_dir_all(parent).expect("create symlink parent");
         }
-        unix_fs::symlink(self.path.join(relative_target), link).expect("create symlink");
+        // Use an absolute *in-image* target (leading `/`), like a real symlink
+        // inside a scanned root, so the fixtures exercise root-aware resolution
+        // rather than accidentally pointing at host paths under the temp dir.
+        unix_fs::symlink(Path::new("/").join(relative_target), link).expect("create symlink");
     }
 
     fn path(&self) -> &Path {
@@ -323,6 +326,22 @@ fn symlinked_directory_is_resolved_under_root() {
     assert!(
         stdout.contains("/etc/cron.d/dirjob") && !stdout.contains("/realcrond"),
         "location should be the canonical path, not the resolved target:\n{stdout}"
+    );
+}
+
+#[test]
+fn root_account_startup_files_are_scanned() {
+    // The root account's home is /root, not under /home, so it must be scanned
+    // explicitly -- important for offline image scans where $HOME is irrelevant.
+    let root = TempRoot::new();
+    root.write("root/.profile", "# root profile\nexport PATH=$PATH\n");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "l", "--root", &root_arg, "-c"]);
+
+    assert!(
+        stdout.contains("/root/.profile"),
+        "root account startup files should be scanned:\n{stdout}"
     );
 }
 

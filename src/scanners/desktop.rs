@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    display_location, first_command_path, list_dirs, list_files, modified_timestamp,
+    display_location, first_command_path, home_dirs, list_files, modified_timestamp,
     read_to_string, rooted,
 };
 
@@ -14,14 +14,8 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
     let mut dirs = vec![rooted(options, "/etc/xdg/autostart")];
 
-    for home in list_dirs(&options.root, &rooted(options, "/home")) {
+    for home in home_dirs(options) {
         dirs.push(home.join(".config/autostart"));
-    }
-
-    if options.root == std::path::Path::new("/") {
-        if let Ok(home) = std::env::var("HOME") {
-            dirs.push(std::path::PathBuf::from(home).join(".config/autostart"));
-        }
     }
 
     dirs.sort();

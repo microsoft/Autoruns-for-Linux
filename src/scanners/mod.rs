@@ -53,6 +53,25 @@ pub(crate) fn rooted(options: &Options, relative: &str) -> std::path::PathBuf {
     options.root.join(relative)
 }
 
+// Returns the user home directories to scan for per-user startup/autostart
+// entries: every directory under /home, the root account's home (/root), and --
+// only when scanning the live root -- the current $HOME. Paths are rooted under
+// --root and deduplicated. Including /root explicitly means the root account's
+// entries are covered when scanning an offline image (where $HOME is irrelevant)
+// and when scanning the live system as a non-root user.
+pub(crate) fn home_dirs(options: &Options) -> Vec<std::path::PathBuf> {
+    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
+    homes.push(rooted(options, "/root"));
+    if options.root == std::path::Path::new("/") {
+        if let Ok(home) = std::env::var("HOME") {
+            homes.push(std::path::PathBuf::from(home));
+        }
+    }
+    homes.sort();
+    homes.dedup();
+    homes
+}
+
 pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
     resolve_in_root(root, path).and_then(|resolved| std::fs::read_to_string(resolved).ok())
 }

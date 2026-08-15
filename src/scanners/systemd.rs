@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    display_location, first_command_path, list_dirs, list_files, modified_timestamp,
+    display_location, first_command_path, home_dirs, list_dirs, list_files, modified_timestamp,
     read_to_string, resolve_in_root, rooted,
 };
 
@@ -46,13 +46,7 @@ fn unit_dirs(options: &Options) -> Vec<std::path::PathBuf> {
         rooted(options, "/usr/lib/systemd/user"),
         rooted(options, "/lib/systemd/user"),
     ];
-    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
-    if options.root == std::path::Path::new("/") {
-        if let Ok(home) = std::env::var("HOME") {
-            homes.push(std::path::PathBuf::from(home));
-        }
-    }
-    for home in homes {
+    for home in home_dirs(options) {
         dirs.push(home.join(".config/systemd/user"));
     }
     dirs.sort();

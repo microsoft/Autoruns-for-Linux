@@ -4,7 +4,7 @@ use crate::{
 };
 
 use super::{
-    display_location, in_root_path, list_dirs, list_files, modified_timestamp, resolve_in_root,
+    display_location, home_dirs, in_root_path, list_files, modified_timestamp, resolve_in_root,
     rooted,
 };
 
@@ -29,13 +29,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         ".zshrc",
     ];
 
-    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
-    if options.root == std::path::Path::new("/") {
-        if let Ok(home) = std::env::var("HOME") {
-            homes.push(std::path::PathBuf::from(home));
-        }
-    }
-    for home in homes {
+    for home in home_dirs(options) {
         for name in profile_names {
             files.push(home.join(name));
         }
