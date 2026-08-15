@@ -312,11 +312,17 @@ fn symlinked_directory_is_resolved_under_root() {
     unix_fs::symlink("/realcrond", &link).expect("create absolute dir symlink");
     let root_arg = root.path().to_string_lossy().to_string();
 
-    let stdout = run(&["-nobanner", "-a", "t", "--root", &root_arg]);
+    let stdout = run(&["-nobanner", "-a", "t", "--root", &root_arg, "-c"]);
 
     assert!(
         stdout.contains("/usr/bin/dircronjob --run"),
         "symlinked scan directory should be resolved under --root:\n{stdout}"
+    );
+    // The reported location should be the canonical scanned path, not the
+    // symlink target it resolves to.
+    assert!(
+        stdout.contains("/etc/cron.d/dirjob") && !stdout.contains("/realcrond"),
+        "location should be the canonical path, not the resolved target:\n{stdout}"
     );
 }
 

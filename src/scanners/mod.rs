@@ -70,7 +70,11 @@ pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<s
                     .map(|kind| kind.is_file() || kind.is_symlink())
                     .unwrap_or(false)
                 {
-                    files.push(entry.path());
+                    // Return the canonical in-image path (under `dir`), not the
+                    // resolved symlink target, so downstream location reporting
+                    // reflects the directory that was actually scanned. Access is
+                    // still safe: callers re-resolve via `resolve_in_root`.
+                    files.push(dir.join(entry.file_name()));
                 }
             }
         }
@@ -84,7 +88,10 @@ pub(crate) fn list_dirs(root: &std::path::Path, dir: &std::path::Path) -> Vec<st
     if let Some(resolved) = resolve_in_root(root, dir) {
         if let Ok(read_dir) = std::fs::read_dir(resolved) {
             for entry in read_dir.flatten() {
-                let path = entry.path();
+                // Use the canonical in-image path (under `dir`) rather than the
+                // resolved symlink target, so downstream scanners build paths
+                // under the directory that was actually enumerated.
+                let path = dir.join(entry.file_name());
                 // Include symlinks whose target (resolved under --root) is a
                 // directory, e.g. a relocated home or usrmerge-style layout, so
                 // scanners that rely on `list_dirs` do not silently skip them.
