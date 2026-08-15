@@ -1,20 +1,24 @@
 # Azure build pipeline for Sysinternals Autoruns for Linux.
 #
 # Follows the Sysinternals-jcd pipeline pattern: a thin top-level pipeline that
-# checks out the pull-request commit (`self`) and delegates the build/test work
-# to a reusable template.
+# checks out the current commit (`self`) and delegates the build/test work to a
+# reusable template.
+#
+# During the initial implementation this pipeline is scoped to the fork's
+# working branch (initial-rust-implementation): `checkout: self` builds whichever
+# repository the pipeline is attached to (the fork), and the CI trigger below
+# runs on every push to that branch so issues can be resolved without opening a
+# pull request. PR triggers are disabled for the same reason.
 
 trigger:
   branches:
     include:
-      - release/*
-      - main
+      - initial-rust-implementation
     exclude:
       - dev/*
       - test/*
 
-pr:
-- main
+pr: none
 
 stages:
 - stage: "Build"
