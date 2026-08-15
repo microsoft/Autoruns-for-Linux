@@ -15,7 +15,10 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         rooted(options, "/etc/zsh/zprofile"),
         rooted(options, "/etc/zsh/zshrc"),
     ];
-    files.extend(list_files(&rooted(options, "/etc/profile.d")));
+    files.extend(list_files(
+        &options.root,
+        &rooted(options, "/etc/profile.d"),
+    ));
 
     let profile_names = [
         ".profile",
@@ -26,7 +29,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         ".zshrc",
     ];
 
-    let mut homes = list_dirs(&rooted(options, "/home"));
+    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
     if options.root == std::path::Path::new("/") {
         if let Ok(home) = std::env::var("HOME") {
             homes.push(std::path::PathBuf::from(home));

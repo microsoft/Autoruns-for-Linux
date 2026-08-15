@@ -12,7 +12,10 @@ pub fn scan_modules(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
     for path in [rooted(options, "/etc/modules")]
         .into_iter()
-        .chain(list_files(&rooted(options, "/etc/modules-load.d")))
+        .chain(list_files(
+            &options.root,
+            &rooted(options, "/etc/modules-load.d"),
+        ))
     {
         if let Some(content) = read_to_string(&options.root, &path) {
             for (line_number, line) in content.lines().enumerate() {
@@ -61,7 +64,7 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
             entries.push(entry);
         }
     }
-    for script in list_files(&rooted(options, "/etc/init.d")) {
+    for script in list_files(&options.root, &rooted(options, "/etc/init.d")) {
         let mut entry = AutorunEntry::new(
             Category::Boot,
             script
@@ -85,7 +88,7 @@ pub fn scan_boot(options: &Options) -> Vec<AutorunEntry> {
 pub fn scan_hijacks(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
 
-    for path in list_files(&rooted(options, "/etc/alternatives")) {
+    for path in list_files(&options.root, &rooted(options, "/etc/alternatives")) {
         let mut entry = AutorunEntry::new(
             Category::Hijacks,
             path.file_name()
@@ -130,7 +133,7 @@ pub fn scan_loader(options: &Options) -> Vec<AutorunEntry> {
         }
     }
 
-    for file in list_files(&rooted(options, "/etc/ld.so.conf.d")) {
+    for file in list_files(&options.root, &rooted(options, "/etc/ld.so.conf.d")) {
         let mut entry = AutorunEntry::new(
             Category::Loader,
             file.file_name()
@@ -157,7 +160,7 @@ pub fn scan_network(options: &Options) -> Vec<AutorunEntry> {
         "/etc/dhcp/dhclient-enter-hooks.d",
         "/etc/dhcp/dhclient-exit-hooks.d",
     ] {
-        for script in list_files(&rooted(options, dir)) {
+        for script in list_files(&options.root, &rooted(options, dir)) {
             let mut entry = AutorunEntry::new(
                 Category::Network,
                 script

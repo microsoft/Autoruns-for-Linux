@@ -13,7 +13,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
 
     for file in [rooted(options, "/etc/crontab")]
         .into_iter()
-        .chain(list_files(&rooted(options, "/etc/cron.d")))
+        .chain(list_files(&options.root, &rooted(options, "/etc/cron.d")))
     {
         if let Some(content) = read_to_string(&options.root, &file) {
             entries.extend(parse_crontab(options, &file, &content));
@@ -26,7 +26,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         "/etc/cron.weekly",
         "/etc/cron.monthly",
     ] {
-        for script in list_files(&rooted(options, dir_name)) {
+        for script in list_files(&options.root, &rooted(options, dir_name)) {
             let mut entry = AutorunEntry::new(
                 Category::ScheduledTasks,
                 script
@@ -109,21 +109,18 @@ fn cron_command(line: &str) -> Option<String> {
         return Some(fields[2..].join(" "));
     }
 
+    // Non-macro entries in /etc/crontab and /etc/cron.d are system crontab
+    // format: five schedule fields, then a mandatory user field, then the
+    // command. Require that user field rather than guessing whether it is
+    // present, so a command token is never mistaken for the user (or dropped).
     let fields: Vec<&str> = line.split_whitespace().collect();
-    if fields.len() < 6 {
+    if fields.len() < 7 {
         return None;
     }
 
-    let command_index = if fields.len() >= 7 && !fields[5].contains('/') && !fields[5].contains('*')
-    {
-        6
-    } else {
-        5
-    };
-
     Some(
         line.split_whitespace()
-            .skip(command_index)
+            .skip(6)
             .collect::<Vec<_>>()
             .join(" "),
     )

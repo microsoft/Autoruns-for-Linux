@@ -14,7 +14,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
     let mut dirs = vec![rooted(options, "/etc/xdg/autostart")];
 
-    for home in list_dirs(&rooted(options, "/home")) {
+    for home in list_dirs(&options.root, &rooted(options, "/home")) {
         dirs.push(home.join(".config/autostart"));
     }
 
@@ -28,7 +28,7 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     dirs.dedup();
 
     for dir in dirs {
-        for path in list_files(&dir) {
+        for path in list_files(&options.root, &dir) {
             if path.extension().and_then(|value| value.to_str()) != Some("desktop") {
                 continue;
             }

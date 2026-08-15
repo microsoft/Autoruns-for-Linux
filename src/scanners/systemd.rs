@@ -25,7 +25,7 @@ fn scan_units(options: &Options, extension: &str, category: Category) -> Vec<Aut
     let enabled = enabled_unit_names(options, &dirs);
     let mut entries = Vec::new();
     for dir in &dirs {
-        for path in list_files(dir) {
+        for path in list_files(&options.root, dir) {
             if path.extension().and_then(|value| value.to_str()) != Some(extension) {
                 continue;
             }
@@ -46,7 +46,7 @@ fn unit_dirs(options: &Options) -> Vec<std::path::PathBuf> {
         rooted(options, "/usr/lib/systemd/user"),
         rooted(options, "/lib/systemd/user"),
     ];
-    let mut homes = list_dirs(&rooted(options, "/home"));
+    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
     if options.root == std::path::Path::new("/") {
         if let Ok(home) = std::env::var("HOME") {
             homes.push(std::path::PathBuf::from(home));
@@ -175,7 +175,7 @@ fn enabled_unit_names(
 
     let mut names = HashSet::new();
     for base in bases {
-        for dir in list_dirs(&base) {
+        for dir in list_dirs(&options.root, &base) {
             let is_wants = dir
                 .extension()
                 .and_then(|value| value.to_str())

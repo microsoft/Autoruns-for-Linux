@@ -57,9 +57,12 @@ pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> 
     std::fs::read_to_string(resolve_in_root(root, path)).ok()
 }
 
-pub(crate) fn list_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(dir) {
+    // Resolve `dir` first so a symlinked directory (e.g. a usrmerge /lib ->
+    // /usr/lib) cannot make `read_dir` follow an absolute link out to the host
+    // when scanning a non-default --root.
+    if let Ok(read_dir) = std::fs::read_dir(resolve_in_root(root, dir)) {
         for entry in read_dir.flatten() {
             if entry
                 .file_type()
@@ -74,9 +77,9 @@ pub(crate) fn list_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-pub(crate) fn list_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+pub(crate) fn list_dirs(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(dir) {
+    if let Ok(read_dir) = std::fs::read_dir(resolve_in_root(root, dir)) {
         for entry in read_dir.flatten() {
             if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
                 dirs.push(entry.path());

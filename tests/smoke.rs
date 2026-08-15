@@ -239,6 +239,30 @@ fn relative_dotdot_symlink_is_clamped_to_root() {
 }
 
 #[test]
+fn symlinked_directory_is_resolved_under_root() {
+    // A scanned directory that is an absolute symlink inside the image (like a
+    // usrmerge /lib -> /usr/lib) must be listed from its in-image target, not
+    // followed out to the host filesystem.
+    let root = TempRoot::new();
+    root.write(
+        "realcrond/dirjob",
+        "* * * * * root /usr/bin/dircronjob --run\n",
+    );
+    // /etc/cron.d -> /realcrond (absolute, in-image).
+    let link = root.path().join("etc/cron.d");
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    unix_fs::symlink("/realcrond", &link).expect("create absolute dir symlink");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "t", "--root", &root_arg]);
+
+    assert!(
+        stdout.contains("/usr/bin/dircronjob --run"),
+        "symlinked scan directory should be resolved under --root:\n{stdout}"
+    );
+}
+
+#[test]
 fn default_category_is_logon_only() {
     let root = TempRoot::new();
     populate(&root);
