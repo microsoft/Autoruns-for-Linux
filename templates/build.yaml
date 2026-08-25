@@ -12,6 +12,9 @@ parameters:
 - name: runStaticAnalysis
   type: boolean
   default: true
+- name: builddir
+  type: string
+  default: ''
 - name: ldpath
   type: string
   default: ''
