@@ -77,6 +77,7 @@ fn main() -> ExitCode {
 }
 
 fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
+    let mut warned = false;
     for entry in entries {
         if let Some(path) = entry.image_path.as_ref() {
             // Only hash absolute in-image paths. A relative image path (e.g. a
@@ -89,7 +90,20 @@ fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
             let candidate = resolve_under_root(&options.root, path);
             if let Some(candidate) = scanners::resolve_in_root(&options.root, &candidate) {
                 if candidate.is_file() {
-                    entry.sha256 = sha256_file(&candidate).ok();
+                    match sha256_file(&candidate) {
+                        Ok(hash) => entry.sha256 = Some(hash),
+                        Err(error) => {
+                            // Surface the reason once instead of silently
+                            // producing no hashes, so a missing `sha256sum`
+                            // binary (or a per-file error) is actionable.
+                            if !warned {
+                                eprintln!(
+                                    "autoruns: unable to compute file hashes (is `sha256sum` installed and on PATH?): {error}"
+                                );
+                                warned = true;
+                            }
+                        }
+                    }
                 }
             }
         }

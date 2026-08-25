@@ -52,7 +52,7 @@ pub fn parse_args(args: Vec<String>) -> Result<Options, String> {
 
     while index < args.len() {
         match args[index].as_str() {
-            "-?" | "--help" | "-help" => {
+            "-?" | "/?" | "--help" | "-help" => {
                 options.show_help = true;
                 index += 1;
             }
@@ -167,7 +167,7 @@ fn push_unique(categories: &mut Vec<Category>, category: Category) {
 }
 
 pub fn usage() -> &'static str {
-    "Autoruns for Linux shows programs configured to run automatically.\n\nUsage: autoruns [-a <*|blnsthk>] [-c|-ct|--json|-x] [-h] [-m] [-s] [-u] [-t] [-o <output file>] [--root <path>] [-nobanner]\n\n  -a   Autostart entry selection:\n       *    All implemented Linux categories.\n       b    Boot hooks.\n       h    Image hijacks and preload hooks.\n       k    Dynamic loader hooks.\n       l    Logon startups (default).\n       n    Network hooks.\n       s    Services and module startup entries.\n       t    Scheduled tasks.\n  -c     Print output as CSV.\n  -ct    Print output as tab-delimited values.\n  --json Print output as JSON.\n  -x     Print output as XML.\n  -h     Show file hashes where the target file can be resolved.\n  -m     Hide Microsoft entries (accepted for Windows parity; not implemented yet).\n  -o     Write output to the specified file.\n  -s     Verify digital signatures (accepted for Windows parity; not implemented yet).\n  -t     Show timestamps in UTC where available.\n  -u     Show unsigned only (accepted for Windows parity; not implemented yet).\n  -v     Submit hashes to VirusTotal (accepted for Windows parity; not implemented yet).\n  --root Scan an alternate filesystem root.\n  -nobanner\n         Do not display the startup banner."
+    "Autoruns for Linux shows programs configured to run automatically.\n\nUsage: autoruns [-a <*|blnsthk>] [-c|-ct|--json|-x] [-h] [-m] [-s] [-u] [-t] [-o <output file>] [--root <path>] [-nobanner]\n\n  -a   Autostart entry selection:\n       *    All implemented Linux categories.\n       b    Boot hooks.\n       h    Image hijacks and preload hooks.\n       k    Dynamic loader hooks.\n       l    Logon startups (default).\n       n    Network hooks.\n       s    Services and module startup entries.\n       t    Scheduled tasks.\n  -c     Print output as CSV.\n  -ct    Print output as tab-delimited values.\n  --json Print output as JSON.\n  -x     Print output as XML.\n  -h     Show file hashes where the target file can be resolved (requires the `sha256sum` binary on PATH).\n  -m     Hide Microsoft entries (accepted for Windows parity; not implemented yet).\n  -o     Write output to the specified file.\n  -s     Verify digital signatures (accepted for Windows parity; not implemented yet).\n  -t     Show timestamps in UTC where available.\n  -u     Show unsigned only (accepted for Windows parity; not implemented yet).\n  -v     Submit hashes to VirusTotal (accepted for Windows parity; not implemented yet).\n  --root Scan an alternate filesystem root.\n  -nobanner\n         Do not display the startup banner."
 }
 
 #[cfg(test)]
@@ -196,5 +196,13 @@ mod tests {
                 Category::ScheduledTasks
             ]
         );
+    }
+
+    #[test]
+    fn accepts_windows_help_alias() {
+        for flag in ["-?", "/?", "--help", "-help"] {
+            let options = parse_args(vec!["autoruns".to_string(), flag.to_string()]).unwrap();
+            assert!(options.show_help, "{flag} should request help");
+        }
     }
 }
