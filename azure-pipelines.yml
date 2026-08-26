@@ -38,6 +38,13 @@ stages:
         set -euo pipefail
 
         sudo apt-get update
+        sudo apt-get install -y --no-install-recommends rpm
+        AUTORUNS_PACKAGE_INSTALL_TEST=1 ./tests/package.sh
+      displayName: "Validate native DEB and RPM packages"
+
+    - script: |
+        set -euo pipefail
+
         sudo apt-get install -y --no-install-recommends \
           gcc-aarch64-linux-gnu \
           libc6-dev-arm64-cross
@@ -45,4 +52,5 @@ stages:
 
         export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
         cargo build --release --target aarch64-unknown-linux-gnu
+        ./tests/package.sh target/aarch64-unknown-linux-gnu/release arm64 aarch64
       displayName: "Build autoruns for ARM64"

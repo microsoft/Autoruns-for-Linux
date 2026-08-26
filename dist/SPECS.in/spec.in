@@ -1,0 +1,19 @@
+Name:           autoruns
+Version:        @PACKAGE_VERSION@
+Release:        @PACKAGE_RELEASE@%{?dist}
+Summary:        Sysinternals autorun and persistence entry utility
+
+License:        MIT
+URL:            https://github.com/microsoft/Autoruns-for-Linux
+
+%description
+Autoruns is a command-line utility that reports programs, scripts, services,
+timers, and other persistence hooks configured to run automatically on Linux
+systems.
+
+%install
+rm -rf %{buildroot}
+install -D -m 0755 autoruns %{buildroot}%{_bindir}/autoruns
+
+%files
+%{_bindir}/autoruns

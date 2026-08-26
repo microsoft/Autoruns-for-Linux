@@ -1,0 +1,13 @@
+Package: autoruns
+Version: @PACKAGE_VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCHITECTURE@
+Maintainer: Sysinternals <syssite@microsoft.com>
+Homepage: https://github.com/microsoft/Autoruns-for-Linux
+Depends: libc6, libgcc-s1
+Description: Sysinternals autorun and persistence entry utility
+ Autoruns is a command-line utility that reports programs, scripts,
+ services, timers, and other persistence hooks configured to run
+ automatically on Linux systems.
+License: MIT
