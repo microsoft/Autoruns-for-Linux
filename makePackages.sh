@@ -36,13 +36,16 @@ case "$PACKAGE_VERSION" in
     ''|*[!0-9A-Za-z.+~-]*) fail "invalid package version: $PACKAGE_VERSION" ;;
 esac
 
-command -v cargo >/dev/null 2>&1 || fail "cargo is required to validate the package version"
-command -v python3 >/dev/null 2>&1 || fail "python3 is required to validate the package version"
+MANIFEST="$SOURCE_DIR/Cargo.toml"
+[ -f "$MANIFEST" ] || fail "Cargo.toml does not exist: $MANIFEST"
 
-MANIFEST_VERSION=$(
-    cargo metadata --no-deps --format-version 1 --manifest-path "$SOURCE_DIR/Cargo.toml" |
-        python3 -c 'import json, sys; packages = [package for package in json.load(sys.stdin)["packages"] if package["name"] == "autoruns"]; print(packages[0]["version"] if len(packages) == 1 else "")'
-)
+# Read the [package] version with POSIX awk so packaging needs no cargo/python3.
+MANIFEST_VERSION=$(awk '
+    /^\[/ { in_package = ($0 == "[package]") }
+    in_package && /^[[:space:]]*version[[:space:]]*=/ {
+        gsub(/.*=[[:space:]]*"/, ""); gsub(/".*/, ""); print; exit
+    }
+' "$MANIFEST")
 [ -n "$MANIFEST_VERSION" ] || fail "could not determine the autoruns version from Cargo.toml"
 [ "$PACKAGE_VERSION" = "$MANIFEST_VERSION" ] || fail "package version $PACKAGE_VERSION does not match Cargo.toml version $MANIFEST_VERSION"
 

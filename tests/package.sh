@@ -42,10 +42,12 @@ fi
     exit 1
 }
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR_INPUT" && pwd)
-VERSION=$(
-    cargo metadata --no-deps --format-version 1 |
-        python3 -c 'import json, sys; packages = [package for package in json.load(sys.stdin)["packages"] if package["name"] == "autoruns"]; print(packages[0]["version"] if len(packages) == 1 else "")'
-)
+VERSION=$(awk '
+    /^\[/ { in_package = ($0 == "[package]") }
+    in_package && /^[[:space:]]*version[[:space:]]*=/ {
+        gsub(/.*=[[:space:]]*"/, ""); gsub(/".*/, ""); print; exit
+    }
+' Cargo.toml)
 DEB_PACKAGE="$BUILD_DIR/autoruns_${VERSION}_${DEB_ARCHITECTURE}.deb"
 
 ./makePackages.sh . "$BUILD_DIR" autoruns "$VERSION" 0 deb "$DEB_ARCHITECTURE"

@@ -12,6 +12,7 @@ parameters:
 - name: runStaticAnalysis
   type: boolean
   default: true
+# Declared for LinuxTools compatibility (the shared template always passes it); unused here.
 - name: builddir
   type: string
   default: ''
