@@ -21,6 +21,17 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+assert_equal() {
+    LABEL=$1
+    EXPECTED=$2
+    ACTUAL=$3
+
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        printf '%s mismatch: expected <%s>, got <%s>\n' "$LABEL" "$EXPECTED" "$ACTUAL" >&2
+        exit 1
+    fi
+}
+
 cd "$REPO_ROOT"
 if [ "$#" -eq 0 ]; then
     cargo build --release
@@ -91,14 +102,18 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
         exit 1
     }
 
-    [ "$(rpm -qp --queryformat '%{NAME}' "$RPM_PACKAGE")" = "autoruns" ]
-    [ "$(rpm -qp --queryformat '%{VERSION}' "$RPM_PACKAGE")" = "$VERSION" ]
-    [ "$(rpm -qp --queryformat '%{RELEASE}' "$RPM_PACKAGE")" = "0" ]
-    [ "$(rpm -qp --queryformat '%{ARCH}' "$RPM_PACKAGE")" = "$RPM_ARCHITECTURE" ]
-    [ "$(rpm -qp --queryformat '%{LICENSE}' "$RPM_PACKAGE")" = "MIT" ]
-    [ "$(rpm -qp --queryformat '%{URL}' "$RPM_PACKAGE")" = "https://github.com/microsoft/Autoruns-for-Linux" ]
-    [ "$(rpm -qpl "$RPM_PACKAGE")" = "/usr/bin/autoruns" ]
-    rpm -qplv "$RPM_PACKAGE" | grep -q '^-rwxr-xr-x .* /usr/bin/autoruns$'
+    assert_equal "RPM name" "autoruns" "$(rpm -qp --queryformat '%{NAME}' "$RPM_PACKAGE")"
+    assert_equal "RPM version" "$VERSION" "$(rpm -qp --queryformat '%{VERSION}' "$RPM_PACKAGE")"
+    assert_equal "RPM release" "0" "$(rpm -qp --queryformat '%{RELEASE}' "$RPM_PACKAGE")"
+    assert_equal "RPM architecture" "$RPM_ARCHITECTURE" "$(rpm -qp --queryformat '%{ARCH}' "$RPM_PACKAGE")"
+    assert_equal "RPM license" "MIT" "$(rpm -qp --queryformat '%{LICENSE}' "$RPM_PACKAGE")"
+    assert_equal "RPM URL" "https://github.com/microsoft/Autoruns-for-Linux" "$(rpm -qp --queryformat '%{URL}' "$RPM_PACKAGE")"
+    assert_equal "RPM payload" "/usr/bin/autoruns" "$(rpm -qpl "$RPM_PACKAGE")"
+    if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rwxr-xr-x .* /usr/bin/autoruns$'; then
+        echo "RPM executable mode is not 0755" >&2
+        rpm -qplv "$RPM_PACKAGE" >&2
+        exit 1
+    fi
 fi
 
 echo "Package smoke test passed for $DEB_ARCHITECTURE${RPM_ARCHITECTURE:+/$RPM_ARCHITECTURE}"
