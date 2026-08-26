@@ -4,21 +4,20 @@
 # checks out the current commit (`self`) and delegates the build/test work to a
 # reusable template.
 #
-# During the initial implementation this pipeline is scoped to the fork's
-# working branch (initial-rust-implementation): `checkout: self` builds whichever
-# repository the pipeline is attached to (the fork), and the CI trigger below
-# runs on every push to that branch so issues can be resolved without opening a
-# pull request. PR triggers are disabled for the same reason.
+# `checkout: self` builds the commit or PR merge ref supplied by the repository
+# connected to the Azure Pipelines definition.
 
 trigger:
   branches:
     include:
-      - initial-rust-implementation
-    exclude:
-      - dev/*
-      - test/*
+      - main
+      - release/*
 
-pr: none
+pr:
+  autoCancel: true
+  branches:
+    include:
+      - main
 
 stages:
 - stage: "Build"
@@ -28,7 +27,6 @@ stages:
       vmImage: "ubuntu-24.04"
     steps:
     - checkout: self
-      persistCredentials: true
 
     - template: templates/build.yaml
       parameters:
