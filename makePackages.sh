@@ -56,6 +56,37 @@ esac
 BINARY="$BUILD_DIR/autoruns"
 [ -f "$BINARY" ] || fail "binary does not exist: $BINARY"
 [ -x "$BINARY" ] || fail "binary is not executable: $BINARY"
+command -v readelf >/dev/null 2>&1 || fail "readelf is required to verify the binary architecture"
+
+ELF_HEADER=$(LC_ALL=C readelf -h "$BINARY") || fail "could not read ELF header: $BINARY"
+ELF_CLASS=$(printf '%s\n' "$ELF_HEADER" | awk -F: '
+    /^[[:space:]]*Class:/ {
+        value = $2
+        sub(/^[[:space:]]*/, "", value)
+        sub(/[[:space:]]*$/, "", value)
+        print value
+        exit
+    }
+')
+ELF_MACHINE=$(printf '%s\n' "$ELF_HEADER" | awk -F: '
+    /^[[:space:]]*Machine:/ {
+        value = $2
+        sub(/^[[:space:]]*/, "", value)
+        sub(/[[:space:]]*$/, "", value)
+        print value
+        exit
+    }
+')
+[ "$ELF_CLASS" = "ELF64" ] || fail "binary class mismatch: expected ELF64, got ${ELF_CLASS:-unknown}"
+[ -n "$ELF_MACHINE" ] || fail "could not determine ELF machine type: $BINARY"
+
+case "$ARCHITECTURE" in
+    amd64|x86_64) EXPECTED_MACHINE="Advanced Micro Devices X86-64" ;;
+    arm64|aarch64) EXPECTED_MACHINE="AArch64" ;;
+    *) EXPECTED_MACHINE= ;;
+esac
+[ -n "$EXPECTED_MACHINE" ] || fail "unsupported package architecture: $ARCHITECTURE"
+[ "$ELF_MACHINE" = "$EXPECTED_MACHINE" ] || fail "binary architecture mismatch: requested $ARCHITECTURE, ELF machine is $ELF_MACHINE"
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/autoruns-package.XXXXXX")
 cleanup() {

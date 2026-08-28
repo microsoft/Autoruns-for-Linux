@@ -3,13 +3,14 @@ mod model;
 mod output;
 mod scanners;
 
-use std::{fs, process::ExitCode};
+use std::io::{Read, Write};
+use std::process::ExitCode;
 
-use cli::{parse_args, OutputFormat};
+use cli::parse_args;
 use model::AutorunEntry;
 
 fn main() -> ExitCode {
-    let options = match parse_args(std::env::args().collect()) {
+    let mut options = match parse_args(std::env::args().collect()) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("{message}");
@@ -24,13 +25,22 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    options.root = match validate_root(&options.root) {
+        Ok(root) => root,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(2);
+        }
+    };
+
     if !options.no_banner {
         eprintln!("Autoruns for Linux v{}", env!("CARGO_PKG_VERSION"));
         eprintln!("Sysinternals - Linux autorun entry scanner");
         eprintln!();
     }
 
-    let mut entries = scanners::scan(&options);
+    let report = scanners::scan(&options);
+    let mut entries = report.entries;
 
     if options.show_hashes {
         add_hashes(&options, &mut entries);
@@ -44,36 +54,74 @@ fn main() -> ExitCode {
         }
     }
 
-    if options.hide_microsoft
-        || options.verify_signatures
-        || options.show_unsigned_only
-        || options.virus_total_check
-    {
-        entries.push(AutorunEntry::unsupported(
-            model::Category::Unsupported,
-            "Windows-compatible trust filtering",
-            "Linux publisher/signature and VirusTotal parity is not implemented yet",
-        ));
+    for diagnostic in &report.diagnostics {
+        eprintln!(
+            "autoruns: partial scan: {} {}: {}",
+            diagnostic.operation,
+            diagnostic.path.display(),
+            diagnostic.message
+        );
     }
 
-    let rendered = match options.format {
-        OutputFormat::Table => output::table(&entries),
-        OutputFormat::Csv => output::delimited(&entries, ',', &options.root),
-        OutputFormat::Tsv => output::delimited(&entries, '\t', &options.root),
-        OutputFormat::Json => output::json(&entries, &options.root),
-        OutputFormat::Xml => output::xml(&entries, &options.root),
-    };
-
     if let Some(path) = &options.output_file {
-        if let Err(error) = fs::write(path, rendered) {
+        let result = create_private_file(path).and_then(|file| {
+            let mut writer = std::io::BufWriter::new(file);
+            output::write(&mut writer, &entries, &options.format, &options.root)?;
+            writer.flush()
+        });
+        if let Err(error) = result {
             eprintln!("failed to write {}: {error}", path.display());
             return ExitCode::from(1);
         }
     } else {
-        print!("{rendered}");
+        let stdout = std::io::stdout();
+        let mut writer = std::io::BufWriter::new(stdout.lock());
+        let result = output::write(&mut writer, &entries, &options.format, &options.root)
+            .and_then(|()| writer.flush());
+        if let Err(error) = result {
+            if error.kind() != std::io::ErrorKind::BrokenPipe {
+                eprintln!("failed to write output: {error}");
+                return ExitCode::from(1);
+            }
+        }
     }
 
-    ExitCode::SUCCESS
+    if report.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(3)
+    }
+}
+
+fn validate_root(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("invalid --root {}: {error}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!(
+            "invalid --root {}: not a directory",
+            root.display()
+        ));
+    }
+    Ok(root)
+}
+
+#[cfg(unix)]
+fn create_private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn create_private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::create(path)
 }
 
 fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
@@ -88,20 +136,13 @@ fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
                 continue;
             }
             let candidate = resolve_under_root(&options.root, path);
-            if let Some(candidate) = scanners::resolve_in_root(&options.root, &candidate) {
-                if candidate.is_file() {
-                    match sha256_file(&candidate) {
-                        Ok(hash) => entry.sha256 = Some(hash),
-                        Err(error) => {
-                            // Surface the reason once instead of silently
-                            // producing no hashes, so a missing `sha256sum`
-                            // binary (or a per-file error) is actionable.
-                            if !warned {
-                                eprintln!(
-                                    "autoruns: unable to compute file hashes (is `sha256sum` installed and on PATH?): {error}"
-                                );
-                                warned = true;
-                            }
+            if scanners::path_is_file(&options.root, &candidate) {
+                match sha256_file(&options.root, &candidate) {
+                    Ok(hash) => entry.sha256 = Some(hash),
+                    Err(error) => {
+                        if !warned {
+                            eprintln!("autoruns: unable to compute file hashes: {error}");
+                            warned = true;
                         }
                     }
                 }
@@ -162,30 +203,18 @@ fn resolve_under_root(root: &std::path::Path, path: &std::path::Path) -> std::pa
     }
 }
 
-fn sha256_file(path: &std::path::Path) -> std::io::Result<String> {
-    use std::process::Command;
+fn sha256_file(root: &std::path::Path, path: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
 
-    // Propagate the real spawn error (e.g. NotFound when `sha256sum` is not
-    // installed) rather than masking every failure as "command unavailable".
-    // `--` terminates option parsing so a path beginning with `-` is not
-    // mistaken for a flag.
-    let output = Command::new("sha256sum").arg("--").arg(path).output()?;
-    if !output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "sha256sum failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+    let mut file = scanners::open_file_in_root(root, path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
     }
-
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .map(|hash| hash.to_string())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "sha256sum produced no output",
-            )
-        })
+    Ok(format!("{:x}", hasher.finalize()))
 }

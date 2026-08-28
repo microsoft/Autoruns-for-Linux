@@ -1,16 +1,58 @@
+mod applications;
+mod browser;
 mod cron;
 mod desktop;
+mod device;
 mod linux;
 mod shell;
-mod systemd;
+mod systemd_effective;
 
 use crate::{
     cli::Options,
-    model::{AutorunEntry, Category},
+    model::{AutorunEntry, Category, ScanDiagnostic, TargetState},
 };
 
-pub fn scan(options: &Options) -> Vec<AutorunEntry> {
+#[derive(Debug, Default)]
+pub struct ScanReport {
+    pub entries: Vec<AutorunEntry>,
+    pub diagnostics: Vec<ScanDiagnostic>,
+}
+
+thread_local! {
+    static DIAGNOSTICS: std::cell::RefCell<Vec<ScanDiagnostic>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ROOT_ACCESS: std::cell::RefCell<Option<RootAccess>> = const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Clone, Copy)]
+enum RootAccessMode {
+    Openat2,
+    ImmutableFallback,
+}
+
+struct RootAccess {
+    path: std::path::PathBuf,
+    directory: std::fs::File,
+    mode: RootAccessMode,
+    fallback_reason: Option<String>,
+}
+
+pub fn scan(options: &Options) -> ScanReport {
+    DIAGNOSTICS.with(|diagnostics| diagnostics.borrow_mut().clear());
+    match initialize_root_access(&options.root) {
+        Ok(Some(reason)) => record_diagnostic(
+            "containment",
+            &options.root,
+            format!(
+                "descriptor-relative openat2 containment is unavailable ({reason}); the alternate root must remain immutable during the scan"
+            ),
+        ),
+        Ok(None) => {}
+        Err(error) => record_diagnostic("open scan root", &options.root, error),
+    }
     let mut entries = Vec::new();
+    let include_services = options.categories.contains(&Category::Services);
+    let include_timers = options.categories.contains(&Category::ScheduledTasks);
+    let include_devices = options.categories.contains(&Category::DeviceMount);
 
     for category in &options.categories {
         match category {
@@ -19,17 +61,18 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
                 entries.extend(shell::scan(options));
             }
             Category::Services => {
-                entries.extend(systemd::scan_services(options));
                 entries.extend(linux::scan_modules(options));
             }
             Category::ScheduledTasks => {
                 entries.extend(cron::scan(options));
-                entries.extend(systemd::scan_timers(options));
             }
             Category::Boot => entries.extend(linux::scan_boot(options)),
             Category::Hijacks => entries.extend(linux::scan_hijacks(options)),
             Category::Loader => entries.extend(linux::scan_loader(options)),
             Category::Network => entries.extend(linux::scan_network(options)),
+            Category::Browser => entries.extend(browser::scan(options)),
+            Category::DeviceMount => entries.extend(device::scan(options)),
+            Category::ApplicationIntegrations => entries.extend(applications::scan(options)),
             Category::Unsupported => entries.push(AutorunEntry::unsupported(
                 Category::Unsupported,
                 "Windows-only Autoruns category",
@@ -38,6 +81,15 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
         }
     }
 
+    entries.extend(systemd_effective::scan(
+        options,
+        include_services,
+        include_timers,
+        include_devices,
+    ));
+    entries.extend(completeness_limits(options));
+    enrich_target_metadata(options, &mut entries);
+
     entries.sort_by(|left, right| {
         left.category
             .label()
@@ -45,7 +97,147 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
             .then_with(|| left.location.cmp(&right.location))
             .then_with(|| left.name.cmp(&right.name))
     });
+    let diagnostics =
+        DIAGNOSTICS.with(|diagnostics| std::mem::take(&mut *diagnostics.borrow_mut()));
+    ScanReport {
+        entries,
+        diagnostics,
+    }
+}
+
+fn enrich_target_metadata(options: &Options, entries: &mut [AutorunEntry]) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for entry in entries {
+        let Some(path) = entry.image_path.as_ref() else {
+            continue;
+        };
+        if !path.is_absolute() {
+            entry.target_state = Some(TargetState::Unresolved);
+            continue;
+        }
+
+        match metadata_in_root(&options.root, path) {
+            Ok(metadata) => {
+                entry.target_state = Some(TargetState::Present);
+                entry.target_exists = Some(true);
+                entry.target_executable =
+                    Some(metadata.is_file() && metadata.permissions().mode() & 0o111 != 0);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                entry.target_state = Some(TargetState::Missing);
+                entry.target_exists = Some(false);
+                entry.target_executable = Some(false);
+            }
+            Err(error) => {
+                entry.target_state = Some(TargetState::Inaccessible);
+                record_diagnostic("inspect target", path, error);
+            }
+        }
+    }
+}
+
+fn completeness_limits(options: &Options) -> Vec<AutorunEntry> {
+    let mut entries = Vec::new();
+    let limits = [
+        (
+            Category::Logon,
+            "Unsupported logon adapters",
+            "user logon or desktop session",
+            "PAM, display-manager, compositor, and desktop-specific startup",
+            "XDG autostart and supported shell profiles are inspected; host-specific session adapters are not",
+        ),
+        (
+            Category::Services,
+            "Runtime-only service state",
+            "service manager activation",
+            "transient/generated runtime units and live D-Bus state",
+            "static systemd load paths are inspected; transient units and runtime-only manager state require live inspection",
+        ),
+        (
+            Category::ScheduledTasks,
+            "Unsupported scheduler adapters",
+            "scheduled execution",
+            "at/batch queues and application-specific schedulers",
+            "cron, anacron, and systemd timers are inspected; other scheduler queues are outside the supported adapter set",
+        ),
+        (
+            Category::Boot,
+            "Unsupported early-boot adapters",
+            "early system boot",
+            "bootloader, kernel command line, initramfs, and generator output",
+            "rc.local and SysV hooks are inspected; bootloader and initramfs mechanisms are not",
+        ),
+        (
+            Category::Hijacks,
+            "Unsupported command-resolution adapters",
+            "command or process launch",
+            "environment-only and application-specific command interception",
+            "alternatives registrations are inspected; ephemeral environment and host-specific interception are not",
+        ),
+        (
+            Category::Loader,
+            "Unsupported loader adapters",
+            "process image loading",
+            "runtime environment and namespace-specific loader injection",
+            "ld.so preload/search configuration is inspected; process-local runtime environment is not",
+        ),
+        (
+            Category::Network,
+            "Unsupported network-daemon adapters",
+            "network state transition",
+            "daemon-specific hooks outside supported NetworkManager, ifupdown, and DHCP paths",
+            "published hook directories are inspected; arbitrary network-daemon plugin systems are not",
+        ),
+        (
+            Category::Browser,
+            "Unsupported browser/profile adapters",
+            "browser or profile startup",
+            "unsupported browser products and runtime-only profile arguments",
+            "published Chromium-family and Firefox layouts are inspected; arbitrary products and non-persistent runtime profiles are not",
+        ),
+        (
+            Category::DeviceMount,
+            "Unavailable device/media state",
+            "device, mount, path, or media activation",
+            "unmounted media and runtime-only udev state",
+            "static rules/configuration and already mounted media are inspected; devices are never synthesized or mounted",
+        ),
+        (
+            Category::ApplicationIntegrations,
+            "Unsupported application hosts",
+            "application-defined extension activation",
+            "application plugin systems other than LibreOffice/OpenOffice",
+            "LibreOffice/OpenOffice integrations are inspected; Linux has no universal application plugin registry",
+        ),
+    ];
+    for (category, name, event, mechanism, note) in limits {
+        if options.categories.contains(&category) {
+            entries.push(AutorunEntry::completeness_limit(
+                category, name, event, mechanism, note,
+            ));
+        }
+    }
     entries
+}
+
+pub(crate) fn record_diagnostic(
+    operation: impl Into<String>,
+    path: &std::path::Path,
+    error: impl std::fmt::Display,
+) {
+    DIAGNOSTICS.with(|diagnostics| {
+        diagnostics.borrow_mut().push(ScanDiagnostic::new(
+            operation,
+            path.to_path_buf(),
+            error.to_string(),
+        ));
+    });
 }
 
 pub(crate) fn rooted(options: &Options, relative: &str) -> std::path::PathBuf {
@@ -60,43 +252,119 @@ pub(crate) fn rooted(options: &Options, relative: &str) -> std::path::PathBuf {
 // entries are covered when scanning an offline image (where $HOME is irrelevant)
 // and when scanning the live system as a non-root user.
 pub(crate) fn home_dirs(options: &Options) -> Vec<std::path::PathBuf> {
-    let mut homes = list_dirs(&options.root, &rooted(options, "/home"));
-    homes.push(rooted(options, "/root"));
-    if options.root == std::path::Path::new("/") {
-        if let Ok(home) = std::env::var("HOME") {
-            homes.push(std::path::PathBuf::from(home));
+    user_homes(options)
+        .into_iter()
+        .map(|user| user.path)
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UserHome {
+    pub principal: String,
+    pub path: std::path::PathBuf,
+}
+
+pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
+    let mut homes = Vec::new();
+    let passwd = rooted(options, "/etc/passwd");
+    if let Some(content) = read_to_string(&options.root, &passwd) {
+        for line in content.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() < 7 || !fields[5].starts_with('/') {
+                continue;
+            }
+            let path = rooted(options, fields[5]);
+            if path_is_dir(&options.root, &path) {
+                homes.push(UserHome {
+                    principal: fields[0].to_string(),
+                    path,
+                });
+            }
         }
     }
-    homes.sort();
-    homes.dedup();
+
+    for path in list_dirs(&options.root, &rooted(options, "/home")) {
+        let principal = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        homes.push(UserHome { principal, path });
+    }
+
+    let root_home = rooted(options, "/root");
+    if path_is_dir(&options.root, &root_home) {
+        homes.push(UserHome {
+            principal: "root".to_string(),
+            path: root_home,
+        });
+    }
+
+    if options.root == std::path::Path::new("/") {
+        if let Ok(home) = std::env::var("HOME") {
+            let principal = std::env::var("USER").unwrap_or_else(|_| "current user".to_string());
+            homes.push(UserHome {
+                principal,
+                path: std::path::PathBuf::from(home),
+            });
+        }
+    }
+
+    homes.sort_by(|left, right| left.path.cmp(&right.path));
+    homes.dedup_by(|left, right| left.path == right.path);
     homes
 }
 
 pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
-    resolve_in_root(root, path).and_then(|resolved| std::fs::read_to_string(resolved).ok())
+    let mut file = match open_file_in_root(root, path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            record_diagnostic("read", path, error);
+            return None;
+        }
+    };
+    let mut content = String::new();
+    match std::io::Read::read_to_string(&mut file, &mut content) {
+        Ok(_) => Some(content),
+        Err(error) => {
+            record_diagnostic("read", path, error);
+            None
+        }
+    }
+}
+
+pub(crate) fn open_file_in_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<std::fs::File> {
+    if root == std::path::Path::new("/") {
+        return std::fs::File::open(path);
+    }
+
+    open_within_root(
+        root,
+        path,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+    )
 }
 
 pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    // Resolve `dir` first so a symlinked directory (e.g. a usrmerge /lib ->
-    // /usr/lib) cannot make `read_dir` follow an absolute link out to the host
-    // when scanning a non-default --root.
-    if let Some(resolved) = resolve_in_root(root, dir) {
-        if let Ok(read_dir) = std::fs::read_dir(resolved) {
-            for entry in read_dir.flatten() {
-                if entry
-                    .file_type()
-                    .map(|kind| kind.is_file() || kind.is_symlink())
-                    .unwrap_or(false)
+    match directory_entries(root, dir) {
+        Ok(entries) => {
+            for (name, file_type) in entries {
+                let path = dir.join(name);
+                if matches!(
+                    file_type,
+                    rustix::fs::FileType::RegularFile | rustix::fs::FileType::Symlink
+                ) || (file_type == rustix::fs::FileType::Unknown && path_is_file(root, &path))
                 {
-                    // Return the canonical in-image path (under `dir`), not the
-                    // resolved symlink target, so downstream location reporting
-                    // reflects the directory that was actually scanned. Access is
-                    // still safe: callers re-resolve via `resolve_in_root`.
-                    files.push(dir.join(entry.file_name()));
+                    files.push(path);
                 }
             }
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => record_diagnostic("list", dir, error),
     }
     files.sort();
     files
@@ -104,28 +372,22 @@ pub(crate) fn list_files(root: &std::path::Path, dir: &std::path::Path) -> Vec<s
 
 pub(crate) fn list_dirs(root: &std::path::Path, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(resolved) = resolve_in_root(root, dir) {
-        if let Ok(read_dir) = std::fs::read_dir(resolved) {
-            for entry in read_dir.flatten() {
-                // Use the canonical in-image path (under `dir`) rather than the
-                // resolved symlink target, so downstream scanners build paths
-                // under the directory that was actually enumerated.
-                let path = dir.join(entry.file_name());
-                // Include symlinks whose target (resolved under --root) is a
-                // directory, e.g. a relocated home or usrmerge-style layout, so
-                // scanners that rely on `list_dirs` do not silently skip them.
-                let is_dir = match entry.file_type() {
-                    Ok(kind) if kind.is_dir() => true,
-                    Ok(kind) if kind.is_symlink() => resolve_in_root(root, &path)
-                        .map(|resolved| resolved.is_dir())
-                        .unwrap_or(false),
-                    _ => false,
-                };
-                if is_dir {
+    match directory_entries(root, dir) {
+        Ok(entries) => {
+            for (name, file_type) in entries {
+                let path = dir.join(name);
+                if file_type == rustix::fs::FileType::Directory
+                    || matches!(
+                        file_type,
+                        rustix::fs::FileType::Symlink | rustix::fs::FileType::Unknown
+                    ) && path_is_dir(root, &path)
+                {
                     dirs.push(path);
                 }
             }
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => record_diagnostic("list", dir, error),
     }
     dirs.sort();
     dirs
@@ -138,6 +400,15 @@ pub(crate) fn first_command_path(command: &str) -> Option<std::path::PathBuf> {
         .map(|token| strip_exec_prefixes(&token).to_string())
         .filter(|token| !token.is_empty())
         .map(std::path::PathBuf::from)
+}
+
+pub(crate) fn is_executable_file(root: &std::path::Path, path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata_in_root(root, path)
+        .ok()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 // systemd `ExecStart=` executables may carry one or more special prefixes
@@ -161,7 +432,7 @@ fn is_env_assignment(token: &str) -> bool {
     }
 }
 
-fn shell_tokens(command: &str) -> Vec<String> {
+pub(crate) fn shell_tokens(command: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut has_token = false;
@@ -211,12 +482,195 @@ fn shell_tokens(command: &str) -> Vec<String> {
 }
 
 pub(crate) fn modified_timestamp(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
-    let modified = std::fs::metadata(resolve_in_root(root, path)?)
-        .ok()?
-        .modified()
-        .ok()?;
+    let metadata = match metadata_in_root(root, path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            record_diagnostic("metadata", path, error);
+            return None;
+        }
+    };
+    let modified = match metadata.modified() {
+        Ok(modified) => modified,
+        Err(error) => {
+            record_diagnostic("metadata", path, error);
+            return None;
+        }
+    };
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(duration.as_secs().to_string())
+}
+
+pub(crate) fn metadata_in_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<std::fs::Metadata> {
+    if root == std::path::Path::new("/") {
+        return std::fs::metadata(path);
+    }
+    open_within_root(
+        root,
+        path,
+        rustix::fs::OFlags::PATH | rustix::fs::OFlags::CLOEXEC,
+    )?
+    .metadata()
+}
+
+pub(crate) fn path_is_file(root: &std::path::Path, path: &std::path::Path) -> bool {
+    metadata_in_root(root, path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+pub(crate) fn path_is_dir(root: &std::path::Path, path: &std::path::Path) -> bool {
+    metadata_in_root(root, path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+}
+
+pub(crate) fn directory_identity(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata_in_root(root, path)
+        .ok()
+        .filter(|metadata| metadata.is_dir())
+        .map(|metadata| (metadata.dev(), metadata.ino()))
+}
+
+pub(crate) fn read_link_in_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+
+    if root == std::path::Path::new("/") {
+        return std::fs::read_link(path);
+    }
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no name"))?;
+    let directory = open_within_root(
+        root,
+        parent,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+    )?;
+    rustix::fs::readlinkat(&directory, name, Vec::new())
+        .map(|target| std::path::PathBuf::from(std::ffi::OsString::from_vec(target.into_bytes())))
+        .map_err(std::io::Error::from)
+}
+
+fn initialize_root_access(root: &std::path::Path) -> std::io::Result<Option<String>> {
+    if root == std::path::Path::new("/") {
+        ROOT_ACCESS.with(|access| *access.borrow_mut() = None);
+        return Ok(None);
+    }
+    ROOT_ACCESS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(access) = slot.as_ref() {
+            if access.path == root {
+                return Ok(access.fallback_reason.clone());
+            }
+        }
+
+        let directory = std::fs::File::open(root)?;
+        let probe = rustix::fs::openat2(
+            &directory,
+            ".",
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+        );
+        let (mode, fallback_reason) = match probe {
+            Ok(_) => (RootAccessMode::Openat2, None),
+            Err(error) => (
+                RootAccessMode::ImmutableFallback,
+                Some(std::io::Error::from(error).to_string()),
+            ),
+        };
+        *slot = Some(RootAccess {
+            path: root.to_path_buf(),
+            directory,
+            mode,
+            fallback_reason: fallback_reason.clone(),
+        });
+        Ok(fallback_reason)
+    })
+}
+
+fn open_within_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    flags: rustix::fs::OFlags,
+) -> std::io::Result<std::fs::File> {
+    initialize_root_access(root)?;
+    ROOT_ACCESS.with(|slot| {
+        let slot = slot.borrow();
+        let access = slot.as_ref().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "scan root is not open")
+        })?;
+        match access.mode {
+            RootAccessMode::Openat2 => {
+                let in_image = in_root_path(path, root);
+                let relative = in_image.strip_prefix("/").unwrap_or(&in_image);
+                rustix::fs::openat2(
+                    &access.directory,
+                    relative,
+                    flags,
+                    rustix::fs::Mode::empty(),
+                    rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+                )
+                .map(std::fs::File::from)
+                .map_err(std::io::Error::from)
+            }
+            RootAccessMode::ImmutableFallback => {
+                let resolved = resolve_in_root(root, path).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "path could not be resolved inside scan root",
+                    )
+                })?;
+                std::fs::File::open(resolved)
+            }
+        }
+    })
+}
+
+fn directory_entries(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<Vec<(std::ffi::OsString, rustix::fs::FileType)>> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = if root == std::path::Path::new("/") {
+        std::fs::File::open(path)?
+    } else {
+        open_within_root(
+            root,
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC,
+        )?
+    };
+    let mut buffer = vec![std::mem::MaybeUninit::<u8>::uninit(); 64 * 1024];
+    let mut iterator = rustix::fs::RawDir::new(&directory, &mut buffer);
+    let mut entries = Vec::new();
+    while let Some(result) = iterator.next() {
+        let entry = result.map_err(std::io::Error::from)?;
+        let name = entry.file_name().to_bytes();
+        if name != b"." && name != b".." {
+            entries.push((
+                std::ffi::OsString::from_vec(name.to_vec()),
+                entry.file_type(),
+            ));
+        }
+    }
+    Ok(entries)
 }
 
 // Reports the entry's location as an absolute path inside the scanned image

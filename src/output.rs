@@ -1,209 +1,372 @@
-use crate::model::AutorunEntry;
+use std::io::Write;
 
-const TABLE_HEADERS: [&str; 6] = ["Category", "Status", "Name", "Command", "Location", "Note"];
+use crate::{cli::OutputFormat, model::AutorunEntry};
 
-pub fn table(entries: &[AutorunEntry]) -> String {
-    let rows: Vec<[String; 6]> = entries
-        .iter()
-        .map(|entry| {
-            [
-                entry.category.to_string(),
-                entry.status.to_string(),
-                entry.name.clone(),
-                entry
-                    .command
-                    .clone()
-                    .or_else(|| {
-                        entry
-                            .image_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                    })
-                    .unwrap_or_default(),
-                entry.location.clone(),
-                entry.note.as_deref().unwrap_or_default().to_string(),
-            ]
-        })
-        .collect();
+const HEADERS: [&str; 22] = [
+    "Category",
+    "Status",
+    "Name",
+    "Description",
+    "Publisher",
+    "ImagePath",
+    "Command",
+    "Location",
+    "Source",
+    "Timestamp",
+    "SHA256",
+    "Note",
+    "Event",
+    "Mechanism",
+    "Principal",
+    "Profile",
+    "Activator",
+    "Target",
+    "Completeness",
+    "TargetState",
+    "TargetExists",
+    "TargetExecutable",
+];
 
-    let mut widths = TABLE_HEADERS.map(|header| header.chars().count());
-    for row in &rows {
+pub fn write<W: Write>(
+    output: &mut W,
+    entries: &[AutorunEntry],
+    format: &OutputFormat,
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    match format {
+        OutputFormat::Table => write_table(output, entries, root),
+        OutputFormat::Csv => write_delimited(output, entries, ',', root),
+        OutputFormat::Tsv => write_delimited(output, entries, '\t', root),
+        OutputFormat::Json => write_json(output, entries, root),
+        OutputFormat::Xml => write_xml(output, entries, root),
+    }
+}
+
+fn write_table<W: Write>(
+    output: &mut W,
+    entries: &[AutorunEntry],
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    let mut widths = HEADERS.map(|header| header.chars().count());
+    for entry in entries {
+        let row = entry_values(entry, root).map(|value| terminal_safe(&value));
         for (index, cell) in row.iter().enumerate() {
             widths[index] = widths[index].max(cell.chars().count());
         }
     }
 
-    let mut output = String::new();
-    write_row(&mut output, &TABLE_HEADERS, &widths);
+    write_row(output, &HEADERS, &widths)?;
     let rules: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
-    write_row(&mut output, &rules, &widths);
-    for row in &rows {
-        write_row(&mut output, row, &widths);
+    write_row(output, &rules, &widths)?;
+    for entry in entries {
+        let row = entry_values(entry, root).map(|value| terminal_safe(&value));
+        write_row(output, &row, &widths)?;
     }
-    output
+    Ok(())
 }
 
-fn write_row<S: AsRef<str>>(output: &mut String, cells: &[S], widths: &[usize]) {
+fn write_row<W: Write, S: AsRef<str>>(
+    output: &mut W,
+    cells: &[S],
+    widths: &[usize],
+) -> std::io::Result<()> {
     let last = cells.len() - 1;
     for (index, cell) in cells.iter().enumerate() {
         let text = cell.as_ref();
-        output.push_str(text);
+        output.write_all(text.as_bytes())?;
         if index != last {
             let pad = widths[index].saturating_sub(text.chars().count()) + 2;
-            output.push_str(&" ".repeat(pad));
+            output.write_all(" ".repeat(pad).as_bytes())?;
         }
     }
-    output.push('\n');
+    output.write_all(b"\n")
 }
 
-pub fn delimited(entries: &[AutorunEntry], delimiter: char, root: &std::path::Path) -> String {
-    let mut output = String::new();
-    let headers = [
-        "Category",
-        "Status",
-        "Name",
-        "Description",
-        "Publisher",
-        "ImagePath",
-        "Command",
-        "Location",
-        "Source",
-        "Timestamp",
-        "SHA256",
-        "Note",
-    ];
-    write_record(&mut output, delimiter, &headers);
+fn write_delimited<W: Write>(
+    output: &mut W,
+    entries: &[AutorunEntry],
+    delimiter: char,
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    write_record(output, delimiter, &HEADERS)?;
     for entry in entries {
-        let values = [
-            entry.category.to_string(),
-            entry.status.to_string(),
-            entry.name.clone(),
-            entry.description.clone().unwrap_or_default(),
-            entry.publisher.clone().unwrap_or_default(),
-            path_value(entry.image_path.as_ref()),
-            entry.command.clone().unwrap_or_default(),
-            entry.location.clone(),
-            source_value(&entry.source_path, root),
-            entry.timestamp.clone().unwrap_or_default(),
-            entry.sha256.clone().unwrap_or_default(),
-            entry.note.clone().unwrap_or_default(),
-        ];
-        write_record(&mut output, delimiter, &values);
+        let values = entry_values(entry, root);
+        write_record(output, delimiter, &values)?;
     }
-    output
+    Ok(())
 }
 
-pub fn json(entries: &[AutorunEntry], root: &std::path::Path) -> String {
-    let mut output = String::from("[\n");
+fn write_json<W: Write>(
+    output: &mut W,
+    entries: &[AutorunEntry],
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    output.write_all(b"[\n")?;
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
-            output.push_str(",\n");
+            output.write_all(b",\n")?;
         }
-        output.push_str("  {");
-        output.push_str(&json_field("category", &entry.category.to_string(), true));
-        output.push_str(&json_field("status", &entry.status.to_string(), false));
-        output.push_str(&json_field("name", &entry.name, false));
-        output.push_str(&json_field(
+        output.write_all(b"  {")?;
+        write_json_field(output, "category", &entry.category.to_string(), true)?;
+        write_json_field(output, "status", &entry.status.to_string(), false)?;
+        write_json_field(output, "name", &entry.name, false)?;
+        write_json_field(
+            output,
             "description",
             entry.description.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "publisher",
             entry.publisher.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "imagePath",
             &path_value(entry.image_path.as_ref()),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "command",
             entry.command.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str(&json_field("location", &entry.location, false));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(output, "location", &entry.location, false)?;
+        write_json_field(
+            output,
             "source",
             &source_value(&entry.source_path, root),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "timestamp",
             entry.timestamp.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "sha256",
             entry.sha256.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str(&json_field(
+        )?;
+        write_json_field(
+            output,
             "note",
             entry.note.as_deref().unwrap_or_default(),
             false,
-        ));
-        output.push_str("\n  }");
+        )?;
+        write_json_field(
+            output,
+            "event",
+            entry.event.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "mechanism",
+            entry.mechanism.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "principal",
+            entry.principal.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "profile",
+            entry.profile.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "activator",
+            entry.activating_entity.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "target",
+            entry.target.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "completeness",
+            entry.completeness.as_deref().unwrap_or_default(),
+            false,
+        )?;
+        write_json_field(
+            output,
+            "targetState",
+            &entry
+                .target_state
+                .map(|state| state.to_string())
+                .unwrap_or_default(),
+            false,
+        )?;
+        write_json_optional_bool(output, "targetExists", entry.target_exists)?;
+        write_json_optional_bool(output, "targetExecutable", entry.target_executable)?;
+        output.write_all(b"\n  }")?;
     }
-    output.push_str("\n]\n");
-    output
+    output.write_all(b"\n]\n")
 }
 
-pub fn xml(entries: &[AutorunEntry], root: &std::path::Path) -> String {
-    let mut output = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<autoruns>\n");
+fn write_xml<W: Write>(
+    output: &mut W,
+    entries: &[AutorunEntry],
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    output.write_all(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<autoruns>\n")?;
     for entry in entries {
-        output.push_str("  <entry>\n");
-        output.push_str(&xml_element("category", &entry.category.to_string()));
-        output.push_str(&xml_element("status", &entry.status.to_string()));
-        output.push_str(&xml_element("name", &entry.name));
-        output.push_str(&xml_element(
+        output.write_all(b"  <entry>\n")?;
+        write_xml_element(output, "category", &entry.category.to_string())?;
+        write_xml_element(output, "status", &entry.status.to_string())?;
+        write_xml_element(output, "name", &entry.name)?;
+        write_xml_element(
+            output,
             "description",
             entry.description.as_deref().unwrap_or_default(),
-        ));
-        output.push_str(&xml_element(
+        )?;
+        write_xml_element(
+            output,
             "publisher",
             entry.publisher.as_deref().unwrap_or_default(),
-        ));
-        output.push_str(&xml_element(
-            "imagePath",
-            &path_value(entry.image_path.as_ref()),
-        ));
-        output.push_str(&xml_element(
+        )?;
+        write_xml_element(output, "imagePath", &path_value(entry.image_path.as_ref()))?;
+        write_xml_element(
+            output,
             "command",
             entry.command.as_deref().unwrap_or_default(),
-        ));
-        output.push_str(&xml_element("location", &entry.location));
-        output.push_str(&xml_element(
-            "source",
-            &source_value(&entry.source_path, root),
-        ));
-        output.push_str(&xml_element(
+        )?;
+        write_xml_element(output, "location", &entry.location)?;
+        write_xml_element(output, "source", &source_value(&entry.source_path, root))?;
+        write_xml_element(
+            output,
             "timestamp",
             entry.timestamp.as_deref().unwrap_or_default(),
-        ));
-        output.push_str(&xml_element(
+        )?;
+        write_xml_element(
+            output,
             "sha256",
             entry.sha256.as_deref().unwrap_or_default(),
-        ));
-        output.push_str(&xml_element(
-            "note",
-            entry.note.as_deref().unwrap_or_default(),
-        ));
-        output.push_str("  </entry>\n");
+        )?;
+        write_xml_element(output, "note", entry.note.as_deref().unwrap_or_default())?;
+        write_xml_element(output, "event", entry.event.as_deref().unwrap_or_default())?;
+        write_xml_element(
+            output,
+            "mechanism",
+            entry.mechanism.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "principal",
+            entry.principal.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "profile",
+            entry.profile.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "activator",
+            entry.activating_entity.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "target",
+            entry.target.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "completeness",
+            entry.completeness.as_deref().unwrap_or_default(),
+        )?;
+        write_xml_element(
+            output,
+            "targetState",
+            &entry
+                .target_state
+                .map(|state| state.to_string())
+                .unwrap_or_default(),
+        )?;
+        write_xml_element(output, "targetExists", &optional_bool(entry.target_exists))?;
+        write_xml_element(
+            output,
+            "targetExecutable",
+            &optional_bool(entry.target_executable),
+        )?;
+        output.write_all(b"  </entry>\n")?;
     }
-    output.push_str("</autoruns>\n");
-    output
+    output.write_all(b"</autoruns>\n")
 }
 
-fn write_record<S: AsRef<str>>(output: &mut String, delimiter: char, values: &[S]) {
+fn write_record<W: Write, S: AsRef<str>>(
+    output: &mut W,
+    delimiter: char,
+    values: &[S],
+) -> std::io::Result<()> {
     for (index, value) in values.iter().enumerate() {
         if index > 0 {
-            output.push(delimiter);
+            write!(output, "{delimiter}")?;
         }
-        output.push_str(&escape_delimited(value.as_ref(), delimiter));
+        output.write_all(escape_delimited(value.as_ref(), delimiter).as_bytes())?;
     }
-    output.push('\n');
+    output.write_all(b"\n")
+}
+
+fn entry_values(entry: &AutorunEntry, root: &std::path::Path) -> [String; 22] {
+    [
+        entry.category.to_string(),
+        entry.status.to_string(),
+        entry.name.clone(),
+        entry.description.clone().unwrap_or_default(),
+        entry.publisher.clone().unwrap_or_default(),
+        path_value(entry.image_path.as_ref()),
+        entry.command.clone().unwrap_or_default(),
+        entry.location.clone(),
+        source_value(&entry.source_path, root),
+        entry.timestamp.clone().unwrap_or_default(),
+        entry.sha256.clone().unwrap_or_default(),
+        entry.note.clone().unwrap_or_default(),
+        entry.event.clone().unwrap_or_default(),
+        entry.mechanism.clone().unwrap_or_default(),
+        entry.principal.clone().unwrap_or_default(),
+        entry.profile.clone().unwrap_or_default(),
+        entry.activating_entity.clone().unwrap_or_default(),
+        entry.target.clone().unwrap_or_default(),
+        entry.completeness.clone().unwrap_or_default(),
+        entry
+            .target_state
+            .map(|state| state.to_string())
+            .unwrap_or_default(),
+        optional_bool(entry.target_exists),
+        optional_bool(entry.target_executable),
+    ]
+}
+
+fn optional_bool(value: Option<bool>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+
+fn terminal_safe(value: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\n' => safe.push_str("\\n"),
+            '\r' => safe.push_str("\\r"),
+            '\t' => safe.push_str("\\t"),
+            value if value.is_control() => safe.push_str(&format!("\\u{{{:04x}}}", value as u32)),
+            value => safe.push(value),
+        }
+    }
+    safe
 }
 
 fn escape_delimited(value: &str, delimiter: char) -> String {
@@ -239,17 +402,36 @@ fn neutralize_formula(value: &str) -> String {
     }
 }
 
-fn json_field(name: &str, value: &str, first: bool) -> String {
+fn write_json_field<W: Write>(
+    output: &mut W,
+    name: &str,
+    value: &str,
+    first: bool,
+) -> std::io::Result<()> {
     let prefix = if first { "\n" } else { ",\n" };
-    format!(
+    write!(
+        output,
         "{prefix}    \"{}\": \"{}\"",
         escape_json(name),
         escape_json(value)
     )
 }
 
-fn xml_element(name: &str, value: &str) -> String {
-    format!("    <{name}>{}</{name}>\n", escape_xml(value))
+fn write_json_optional_bool<W: Write>(
+    output: &mut W,
+    name: &str,
+    value: Option<bool>,
+) -> std::io::Result<()> {
+    let value = match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "null",
+    };
+    write!(output, ",\n    \"{}\": {value}", escape_json(name),)
+}
+
+fn write_xml_element<W: Write>(output: &mut W, name: &str, value: &str) -> std::io::Result<()> {
+    writeln!(output, "    <{name}>{}</{name}>", escape_xml(value))
 }
 
 fn path_value(path: Option<&std::path::PathBuf>) -> String {

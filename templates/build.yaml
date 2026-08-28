@@ -28,22 +28,13 @@ steps:
         export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    # Hosted ubuntu images ship rustup. Fail fast if it is missing rather than
-    # piping a remote install script into a shell, which is a CI supply-chain
-    # risk. rustup then reads the in-repo rust-toolchain.toml and installs the
-    # pinned toolchain and components on the first cargo invocation, keeping
-    # builds reproducible.
-    if ! command -v rustup >/dev/null 2>&1; then
-        echo "rustup not found on the build image. Install rustup (or add a pinned, checksum-verified rustup-init step) before running this pipeline." >&2
-        exit 1
-    fi
+    # Hosted CI supplies standard rustup; governed LinuxTools may supply the
+    # Microsoft Rust toolchain directly. Load the conventional environment when
+    # present, but require the actual compiler tools rather than one installer.
     . "$HOME/.cargo/env" 2>/dev/null || true
 
-    # rustup being present does not guarantee the toolchain binaries are on
-    # PATH (partial install, or a missing $HOME/.cargo/env). Check explicitly so
-    # the failure is actionable rather than a bare "command not found".
     if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
-        echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+        echo "cargo/rustc are not on PATH; install standard Rust or Microsoft Rust before running this template." >&2
         exit 1
     fi
 
@@ -59,16 +50,23 @@ steps:
       set -euo pipefail
       . "$HOME/.cargo/env" 2>/dev/null || true
 
-      # Each Azure DevOps script step runs in a fresh shell, so re-verify the
-      # toolchain is on PATH here too; otherwise fmt/clippy can fail with a bare
-      # "command not found" even when the build step passed.
       if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
-          echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+          echo "cargo/rustc are not on PATH; verify the installed Rust provider." >&2
           exit 1
       fi
 
       cd "${{ parameters.srcPath }}"
-      rustup component add rustfmt clippy
+      if command -v rustup >/dev/null 2>&1; then
+          rustup component add rustfmt clippy
+      fi
+      cargo fmt --version >/dev/null 2>&1 || {
+          echo "rustfmt is required; install it through the selected Rust provider." >&2
+          exit 1
+      }
+      cargo clippy --version >/dev/null 2>&1 || {
+          echo "Clippy is required; install it through the selected Rust provider." >&2
+          exit 1
+      }
       cargo fmt --all -- --check
       cargo clippy --all-targets -- -D warnings
     displayName: "Static analysis (fmt + clippy)"
@@ -77,10 +75,8 @@ steps:
     set -euo pipefail
     . "$HOME/.cargo/env" 2>/dev/null || true
 
-    # Fresh shell for this step: re-verify the toolchain is on PATH so a missing
-    # $HOME/.cargo/env yields an actionable error instead of "command not found".
     if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
-        echo "cargo/rustc are not on PATH after loading the rustup environment; verify the toolchain installation." >&2
+        echo "cargo/rustc are not on PATH; verify the installed Rust provider." >&2
         exit 1
     fi
 

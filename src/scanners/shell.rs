@@ -4,8 +4,7 @@ use crate::{
 };
 
 use super::{
-    display_location, home_dirs, in_root_path, list_files, modified_timestamp, resolve_in_root,
-    rooted,
+    display_location, home_dirs, in_root_path, list_files, modified_timestamp, path_is_file, rooted,
 };
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
@@ -39,11 +38,10 @@ pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     files.dedup();
 
     let mut entries = Vec::new();
-    for file in files.into_iter().filter(|path| {
-        resolve_in_root(&options.root, path)
-            .map(|resolved| resolved.is_file())
-            .unwrap_or(false)
-    }) {
+    for file in files
+        .into_iter()
+        .filter(|path| path_is_file(&options.root, path))
+    {
         let mut entry = AutorunEntry::new(
             Category::Logon,
             file.file_name()

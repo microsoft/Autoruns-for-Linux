@@ -37,7 +37,7 @@ stages:
 
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends rpm
-        AUTORUNS_PACKAGE_INSTALL_TEST=1 ./tests/package.sh
+        AUTORUNS_PACKAGE_INSTALL_TEST=1 AUTORUNS_REQUIRE_RPM_TESTS=1 ./tests/package.sh
       displayName: "Validate native DEB and RPM packages"
 
     - script: |
@@ -50,5 +50,5 @@ stages:
 
         export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
         cargo build --release --target aarch64-unknown-linux-gnu
-        ./tests/package.sh target/aarch64-unknown-linux-gnu/release arm64 aarch64
+        AUTORUNS_REQUIRE_RPM_TESTS=1 ./tests/package.sh target/aarch64-unknown-linux-gnu/release arm64 aarch64
       displayName: "Build autoruns for ARM64"

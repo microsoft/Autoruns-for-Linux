@@ -10,6 +10,15 @@ EXTRACT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/autoruns-package-test.XXXXXX")
 DEB_PACKAGE=
 RPM_PACKAGE=
 DEB_INSTALLED=0
+REQUIRE_RPM_TESTS=${AUTORUNS_REQUIRE_RPM_TESTS:-1}
+
+case "$REQUIRE_RPM_TESTS" in
+    0|1) ;;
+    *)
+        echo "AUTORUNS_REQUIRE_RPM_TESTS must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
 
 cleanup() {
     if [ "$DEB_INSTALLED" -eq 1 ]; then
@@ -89,6 +98,19 @@ if ./makePackages.sh . "$BUILD_DIR" autoruns "${VERSION}.invalid" 0 deb "$DEB_AR
     exit 1
 fi
 
+case "$DEB_ARCHITECTURE" in
+    amd64) WRONG_ARCHITECTURE=arm64 ;;
+    arm64) WRONG_ARCHITECTURE=amd64 ;;
+    *)
+        echo "unsupported test architecture: $DEB_ARCHITECTURE" >&2
+        exit 1
+        ;;
+esac
+if ./makePackages.sh . "$BUILD_DIR" autoruns "$VERSION" 0 deb "$WRONG_ARCHITECTURE" >/dev/null 2>&1; then
+    echo "package creation unexpectedly accepted architecture $WRONG_ARCHITECTURE for the $DEB_ARCHITECTURE binary" >&2
+    exit 1
+fi
+
 if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     [ -n "$RPM_ARCHITECTURE" ] || {
         echo "could not determine the RPM architecture" >&2
@@ -116,6 +138,15 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
         rpm -qplv "$RPM_PACKAGE" >&2
         exit 1
     fi
+elif [ "$REQUIRE_RPM_TESTS" -eq 1 ]; then
+    echo "rpmbuild and rpm are required; set AUTORUNS_REQUIRE_RPM_TESTS=0 only for an explicit DEB-only run" >&2
+    exit 1
+else
+    echo "SKIPPED: RPM package validation explicitly disabled (AUTORUNS_REQUIRE_RPM_TESTS=0)" >&2
 fi
 
-echo "Package smoke test passed for $DEB_ARCHITECTURE${RPM_ARCHITECTURE:+/$RPM_ARCHITECTURE}"
+if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+    echo "Package smoke test passed for DEB $DEB_ARCHITECTURE and RPM $RPM_ARCHITECTURE"
+else
+    echo "DEB package smoke test passed for $DEB_ARCHITECTURE (RPM explicitly skipped)"
+fi
