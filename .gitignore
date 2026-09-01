@@ -1,0 +1,7 @@
+/target/
+*.swp
+*.swo
+*~
+docs/implementation-plan.md
+docs/pipeline-creation-plan.md
+docs/code-review.md

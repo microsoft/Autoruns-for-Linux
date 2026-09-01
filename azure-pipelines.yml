@@ -1,0 +1,54 @@
+# Azure build pipeline for Sysinternals Autoruns for Linux.
+#
+# Follows the Sysinternals-jcd pipeline pattern: a thin top-level pipeline that
+# checks out the current commit (`self`) and delegates the build/test work to a
+# reusable template.
+#
+# `checkout: self` builds the commit or PR merge ref supplied by the repository
+# connected to the Azure Pipelines definition.
+
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+
+pr:
+  autoCancel: true
+  branches:
+    include:
+      - main
+
+stages:
+- stage: "Build"
+  jobs:
+  - job: "Build_autoruns_24_04"
+    pool:
+      vmImage: "ubuntu-24.04"
+    steps:
+    - checkout: self
+
+    - template: templates/build.yaml
+      parameters:
+        srcPath: '.'
+
+    - script: |
+        set -euo pipefail
+
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends rpm
+        AUTORUNS_PACKAGE_INSTALL_TEST=1 AUTORUNS_REQUIRE_RPM_TESTS=1 ./tests/package.sh
+      displayName: "Validate native DEB and RPM packages"
+
+    - script: |
+        set -euo pipefail
+
+        sudo apt-get install -y --no-install-recommends \
+          gcc-aarch64-linux-gnu \
+          libc6-dev-arm64-cross
+        rustup target add aarch64-unknown-linux-gnu
+
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+        cargo build --release --target aarch64-unknown-linux-gnu
+        AUTORUNS_REQUIRE_RPM_TESTS=1 ./tests/package.sh target/aarch64-unknown-linux-gnu/release arm64 aarch64
+      displayName: "Build autoruns for ARM64"

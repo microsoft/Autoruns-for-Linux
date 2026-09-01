@@ -1,0 +1,85 @@
+# Reusable build/test steps template for Autoruns for Linux.
+#
+# Modeled on the Sysinternals-jcd `templates/build.yaml` pattern: the caller
+# passes the source path and optional runtime library path, and this template
+# builds the Rust binary. It additionally runs formatting, lint, and test steps
+# so the shared pipeline validates the crate end to end.
+
+parameters:
+- name: srcPath
+  type: string
+  default: '.'
+- name: runStaticAnalysis
+  type: boolean
+  default: true
+# Declared for LinuxTools compatibility (the shared template always passes it); unused here.
+- name: builddir
+  type: string
+  default: ''
+- name: ldpath
+  type: string
+  default: ''
+
+steps:
+- script: |
+    set -euo pipefail
+
+    if [ -n "${{ parameters.ldpath }}" ]; then
+        export LD_LIBRARY_PATH="${{ parameters.ldpath }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+
+    # Hosted CI supplies standard rustup; governed LinuxTools may supply the
+    # Microsoft Rust toolchain directly. Load the conventional environment when
+    # present, but require the actual compiler tools rather than one installer.
+    . "$HOME/.cargo/env" 2>/dev/null || true
+
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+        echo "cargo/rustc are not on PATH; install standard Rust or Microsoft Rust before running this template." >&2
+        exit 1
+    fi
+
+    rustc --version
+    cargo --version
+
+    cd "${{ parameters.srcPath }}"
+    cargo build --release
+  displayName: "Build autoruns"
+
+- ${{ if eq(parameters.runStaticAnalysis, true) }}:
+  - script: |
+      set -euo pipefail
+      . "$HOME/.cargo/env" 2>/dev/null || true
+
+      if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+          echo "cargo/rustc are not on PATH; verify the installed Rust provider." >&2
+          exit 1
+      fi
+
+      cd "${{ parameters.srcPath }}"
+      if command -v rustup >/dev/null 2>&1; then
+          rustup component add rustfmt clippy
+      fi
+      cargo fmt --version >/dev/null 2>&1 || {
+          echo "rustfmt is required; install it through the selected Rust provider." >&2
+          exit 1
+      }
+      cargo clippy --version >/dev/null 2>&1 || {
+          echo "Clippy is required; install it through the selected Rust provider." >&2
+          exit 1
+      }
+      cargo fmt --all -- --check
+      cargo clippy --all-targets -- -D warnings
+    displayName: "Static analysis (fmt + clippy)"
+
+- script: |
+    set -euo pipefail
+    . "$HOME/.cargo/env" 2>/dev/null || true
+
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
+        echo "cargo/rustc are not on PATH; verify the installed Rust provider." >&2
+        exit 1
+    fi
+
+    cd "${{ parameters.srcPath }}"
+    cargo test --all
+  displayName: "Test autoruns"
