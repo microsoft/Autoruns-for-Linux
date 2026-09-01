@@ -19,6 +19,9 @@ Install Rust, then build with Cargo:
 cargo build --release
 ```
 
+Pull requests targeting `main` run formatting, Clippy, tests, native DEB/RPM
+package validation, and ARM64 build and package validation in CI.
+
 ## Run
 
 Default scan, equivalent to logon startup entries:
