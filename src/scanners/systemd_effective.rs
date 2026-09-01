@@ -247,13 +247,17 @@ fn drop_in_dirs(name: &str) -> Vec<String> {
 }
 
 fn parse_unit_content(content: &str, config: &mut UnitConfig) {
+    let mut section = String::new();
     for line in logical_lines(content) {
         let line = line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with(';')
-            || line.starts_with('[')
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
         {
+            name.trim().clone_into(&mut section);
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
@@ -261,7 +265,7 @@ fn parse_unit_content(content: &str, config: &mut UnitConfig) {
         };
         let key = key.trim();
         let value = value.trim();
-        if matches!(key, "ExecStartPre" | "ExecStart" | "ExecStartPost") {
+        if section == "Service" && is_startup_command_key(key) {
             if value.is_empty() {
                 config.commands.retain(|command| command.phase != key);
             } else {
@@ -283,6 +287,13 @@ fn parse_unit_content(content: &str, config: &mut UnitConfig) {
             config.values.insert(key.to_string(), value.to_string());
         }
     }
+}
+
+fn is_startup_command_key(key: &str) -> bool {
+    matches!(
+        key,
+        "ExecCondition" | "ExecStartPre" | "ExecStart" | "ExecStartPost"
+    )
 }
 
 fn logical_lines(content: &str) -> Vec<String> {
@@ -547,29 +558,46 @@ fn emit_trigger_units(
             "automount" => &["Where"],
             _ => &[],
         };
-        let mut entry = base_entry(
-            options,
-            scope,
-            units,
-            record,
-            category,
-            unit_status(record, units),
-        );
-        entry.event = joined_values(&record.config, trigger_keys)
+        let event = joined_values(&record.config, trigger_keys)
             .or_else(|| Some(format!("systemd {unit_extension} activation")));
-        entry.mechanism = Some(format!("systemd {unit_extension} unit"));
-        entry.activating_entity = Some(record.name.clone());
-        entry.target = Some(target.clone());
-        if let Some(command) = units
+        if let Some(payload) = units
             .effective
             .get(&target)
-            .and_then(|target| target.config.commands.first())
+            .filter(|payload| !payload.config.commands.is_empty())
         {
-            let expanded = expand_specifiers(&command.command, &target);
-            entry.command = Some(expanded.clone());
-            entry.image_path = first_command_path(&expanded);
+            for command in &payload.config.commands {
+                let expanded = expand_specifiers(&command.command, &payload.name);
+                let mut entry = base_entry(
+                    options,
+                    scope,
+                    units,
+                    record,
+                    category,
+                    unit_status(record, units),
+                );
+                entry.event = event.clone();
+                entry.mechanism = Some(format!("systemd {unit_extension} -> {}", command.phase));
+                entry.activating_entity = Some(record.name.clone());
+                entry.target = Some(target.clone());
+                entry.command = Some(expanded.clone());
+                entry.image_path = first_command_path(&expanded);
+                entries.push(entry);
+            }
+        } else {
+            let mut entry = base_entry(
+                options,
+                scope,
+                units,
+                record,
+                category,
+                unit_status(record, units),
+            );
+            entry.event = event;
+            entry.mechanism = Some(format!("systemd {unit_extension} unit"));
+            entry.activating_entity = Some(record.name.clone());
+            entry.target = Some(target);
+            entries.push(entry);
         }
-        entries.push(entry);
     }
 }
 

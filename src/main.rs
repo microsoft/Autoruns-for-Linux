@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::process::ExitCode;
 
 use cli::parse_args;
-use model::AutorunEntry;
+use model::{AutorunEntry, ScanDiagnostic};
 
 fn main() -> ExitCode {
     let mut options = match parse_args(std::env::args().collect()) {
@@ -41,9 +41,10 @@ fn main() -> ExitCode {
 
     let report = scanners::scan(&options);
     let mut entries = report.entries;
+    let mut diagnostics = report.diagnostics;
 
     if options.show_hashes {
-        add_hashes(&options, &mut entries);
+        add_hashes(&options, &mut entries, &mut diagnostics);
     }
 
     if options.utc_timestamps {
@@ -54,7 +55,7 @@ fn main() -> ExitCode {
         }
     }
 
-    for diagnostic in &report.diagnostics {
+    for diagnostic in &diagnostics {
         eprintln!(
             "autoruns: partial scan: {} {}: {}",
             diagnostic.operation,
@@ -86,7 +87,7 @@ fn main() -> ExitCode {
         }
     }
 
-    if report.diagnostics.is_empty() {
+    if diagnostics.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(3)
@@ -107,15 +108,19 @@ fn validate_root(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
 
 #[cfg(unix)]
 fn create_private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    let file = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::TRUNC
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+    )
+    .map(std::fs::File::from)
+    .map_err(std::io::Error::from)?;
+    rustix::fs::fchmod(&file, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
+        .map_err(std::io::Error::from)?;
     Ok(file)
 }
 
@@ -124,8 +129,12 @@ fn create_private_file(path: &std::path::Path) -> std::io::Result<std::fs::File>
     std::fs::File::create(path)
 }
 
-fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
-    let mut warned = false;
+fn add_hashes(
+    options: &cli::Options,
+    entries: &mut [AutorunEntry],
+    diagnostics: &mut Vec<ScanDiagnostic>,
+) {
+    let mut cache = std::collections::HashMap::<std::path::PathBuf, Result<String, String>>::new();
     for entry in entries {
         if let Some(path) = entry.image_path.as_ref() {
             // Only hash absolute in-image paths. A relative image path (e.g. a
@@ -137,12 +146,20 @@ fn add_hashes(options: &cli::Options, entries: &mut [AutorunEntry]) {
             }
             let candidate = resolve_under_root(&options.root, path);
             if scanners::path_is_file(&options.root, &candidate) {
-                match sha256_file(&options.root, &candidate) {
-                    Ok(hash) => entry.sha256 = Some(hash),
+                let result = cache.entry(path.clone()).or_insert_with(|| {
+                    sha256_file(&options.root, &candidate).map_err(|error| error.to_string())
+                });
+                match result {
+                    Ok(hash) => entry.sha256 = Some(hash.clone()),
                     Err(error) => {
-                        if !warned {
-                            eprintln!("autoruns: unable to compute file hashes: {error}");
-                            warned = true;
+                        if !diagnostics.iter().any(|diagnostic| {
+                            diagnostic.operation == "hash" && diagnostic.path == *path
+                        }) {
+                            diagnostics.push(ScanDiagnostic::new(
+                                "hash",
+                                path.clone(),
+                                error.clone(),
+                            ));
                         }
                     }
                 }

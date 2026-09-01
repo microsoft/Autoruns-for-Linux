@@ -59,7 +59,8 @@ cargo run -- --root /mnt/system -a '*' -nobanner
 - Effective XDG desktop autostart and system/per-user shell startup files.
 - Effective systemd system and user services, timers, sockets, paths, devices,
 	mounts, and automounts, including precedence, masks, drop-ins, dependencies,
-	template instances, and command phases.
+	template instances, `ExecCondition`, and every condition/pre/start/post phase
+	for direct and indirectly activated services.
 - System and per-user cron, anacron, and eligible run-parts jobs.
 - Effective modules-load configuration, boot/SysV hooks, dynamic-loader
 	preload/search configuration (including in-root includes), alternatives, and
@@ -71,7 +72,8 @@ cargo run -- --root /mnt/system -a '*' -nobanner
 	execution.
 - Effective udev executable/unit actions, fstab `x-systemd.*` relationships,
 	autofs program maps, effective systemd device/mount/path activation, and
-	autorun/autoopen evidence on already mounted media.
+	freedesktop autorun/autoopen precedence and contained target evidence on
+	already mounted media.
 - Shared and per-user LibreOffice/OpenOffice OXT packages, unpacked extensions,
 	UNO components, event/job configuration, macro libraries, and native helpers.
 
@@ -116,6 +118,8 @@ boundaries are reported explicitly rather than mapped inaccurately.
 	immutable while the pathname fallback is used.
 - Read, metadata, archive, and structured-parse failures are retained as
 	diagnostics while valid rows are still emitted.
+- Text sources and inspected XPI/OXT metadata are read under explicit per-file,
+	member-count, per-member, and cumulative decompression limits.
 - Target-file metadata is inspected without executing discovered code. Runtime
 	service/process state (`active`, `inactive`, or `failed`) is not queried and
 	is unavailable for offline roots.
@@ -123,7 +127,8 @@ boundaries are reported explicitly rather than mapped inaccurately.
 	failure, `2` is an argument/root error, and `3` means partial scan results.
 - `-h` computes SHA-256 in process. Table text escapes terminal controls,
 	CSV/TSV cells are protected against spreadsheet formulas, and `-o` creates
-	owner-only (`0600`) reports on Unix.
+	owner-only (`0600`) reports on Unix. Symlinked report destinations are
+	rejected atomically. Per-target hash failures are partial-scan diagnostics.
 
 ## Contributing
 

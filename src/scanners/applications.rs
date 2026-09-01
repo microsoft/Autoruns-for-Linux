@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Read;
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -10,8 +9,8 @@ use crate::{
 };
 
 use super::{
-    display_location, in_root_path, list_dirs, list_files, modified_timestamp, open_file_in_root,
-    path_is_dir, read_to_string, record_diagnostic, rooted, user_homes,
+    display_location, in_root_path, list_dirs, list_files, modified_timestamp, open_bounded_zip,
+    path_is_dir, read_to_string, record_diagnostic, rooted, user_homes, ArchiveReadBudget,
 };
 
 #[derive(Default)]
@@ -260,8 +259,8 @@ fn scan_oxt(
     entries: &mut Vec<AutorunEntry>,
 ) {
     let parsed = (|| -> Result<OxtEvidence, Box<dyn std::error::Error>> {
-        let file = open_file_in_root(&options.root, path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        let mut archive = open_bounded_zip(&options.root, path)?;
+        let mut read_budget = ArchiveReadBudget::default();
         let mut evidence = OxtEvidence::default();
         for index in 0..archive.len() {
             let mut member = archive.by_index(index)?;
@@ -280,8 +279,8 @@ fn scan_oxt(
                 || name.ends_with("Jobs.xcu")
                 || name.ends_with("Events.xcu")
             {
-                let mut content = String::new();
-                member.read_to_string(&mut content)?;
+                let declared_size = member.size();
+                let content = read_budget.read_text(&mut member, declared_size)?;
                 if let Some(parsed) = parse_xml_evidence(path, &content) {
                     if evidence.xml.name.is_empty() {
                         evidence.xml.name = parsed.name;

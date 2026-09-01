@@ -142,14 +142,23 @@ fn parse_desktop_entry(
         notes.push("effective entry has no Exec command".to_string());
         EntryStatus::Error
     } else if let Some(try_exec) = values.get("TryExec") {
-        if try_exec_available(options, try_exec) {
-            desktop_environment_status(&values, &mut notes)
-        } else {
-            notes.push(format!("TryExec is unavailable: {try_exec}"));
-            EntryStatus::Disabled
+        match try_exec_availability(options, principal, try_exec) {
+            TryExecAvailability::Available => {
+                desktop_environment_status(options, principal, &values, &mut notes)
+            }
+            TryExecAvailability::Missing => {
+                notes.push(format!("TryExec is unavailable: {try_exec}"));
+                EntryStatus::Disabled
+            }
+            TryExecAvailability::Unresolved => {
+                notes.push(format!(
+                    "TryExec cannot be resolved for an offline or other-user environment: {try_exec}"
+                ));
+                EntryStatus::Conditional
+            }
         }
     } else {
-        desktop_environment_status(&values, &mut notes)
+        desktop_environment_status(options, principal, &values, &mut notes)
     };
 
     if let Some(value) = values.get("OnlyShowIn") {
@@ -169,6 +178,8 @@ fn parse_desktop_entry(
 }
 
 fn desktop_environment_status(
+    options: &Options,
+    principal: &str,
     values: &HashMap<String, String>,
     notes: &mut Vec<String>,
 ) -> EntryStatus {
@@ -176,6 +187,14 @@ fn desktop_environment_status(
     let excluded = values.get("NotShowIn");
     if only.is_none() && excluded.is_none() {
         return EntryStatus::Enabled;
+    }
+
+    if !has_matching_live_environment(options, principal) {
+        notes.push(
+            "desktop environment is unavailable for an offline or other-user scan; visibility is conditional"
+                .to_string(),
+        );
+        return EntryStatus::Conditional;
     }
 
     let Ok(current) = std::env::var("XDG_CURRENT_DESKTOP") else {
@@ -198,15 +217,47 @@ fn desktop_environment_status(
     }
 }
 
-fn try_exec_available(options: &Options, value: &str) -> bool {
+enum TryExecAvailability {
+    Available,
+    Missing,
+    Unresolved,
+}
+
+fn try_exec_availability(options: &Options, principal: &str, value: &str) -> TryExecAvailability {
     let candidate = std::path::Path::new(value);
     if candidate.is_absolute() {
-        return is_executable(options, &rooted(options, value));
+        return if is_executable(options, &rooted(options, value)) {
+            TryExecAvailability::Available
+        } else {
+            TryExecAvailability::Missing
+        };
     }
-    ["/usr/local/bin", "/usr/bin", "/bin"]
-        .iter()
-        .map(|dir| rooted(options, dir).join(candidate))
-        .any(|path| is_executable(options, &path))
+    if !has_matching_live_environment(options, principal) {
+        return TryExecAvailability::Unresolved;
+    }
+    let Some(path) = std::env::var_os("PATH") else {
+        return TryExecAvailability::Unresolved;
+    };
+    let mut searched = false;
+    for directory in std::env::split_paths(&path).filter(|directory| directory.is_absolute()) {
+        searched = true;
+        if is_executable(options, &directory.join(candidate)) {
+            return TryExecAvailability::Available;
+        }
+    }
+    if searched {
+        TryExecAvailability::Missing
+    } else {
+        TryExecAvailability::Unresolved
+    }
+}
+
+fn has_matching_live_environment(options: &Options, principal: &str) -> bool {
+    options.root == std::path::Path::new("/")
+        && std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .map(|current| current == principal)
+            .unwrap_or(false)
 }
 
 fn is_executable(options: &Options, path: &std::path::Path) -> bool {

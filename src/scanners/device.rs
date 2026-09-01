@@ -7,7 +7,8 @@ use crate::{
 
 use super::{
     directory_identity, display_location, first_command_path, in_root_path, is_executable_file,
-    list_dirs, list_files, modified_timestamp, read_link_in_root, read_to_string, rooted,
+    list_dirs, list_files, modified_timestamp, path_is_file, read_link_in_root, read_to_string,
+    resolve_in_root, rooted,
 };
 
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
@@ -302,39 +303,178 @@ fn scan_media_evidence(options: &Options) -> Vec<AutorunEntry> {
         mounts.sort();
         mounts.dedup();
         for mount in mounts {
-            for path in list_files(&options.root, &mount) {
-                let name = path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("");
-                if !matches!(name, ".autorun" | "autorun" | "autorun.sh" | ".autoopen") {
-                    continue;
+            let files = list_files(&options.root, &mount);
+            let marker = |name: &str| {
+                files
+                    .iter()
+                    .find(|path| path.file_name().and_then(|value| value.to_str()) == Some(name))
+            };
+
+            let selected_autorun = [".autorun", "autorun", "autorun.sh"]
+                .into_iter()
+                .find(|name| marker(name).is_some());
+            for name in [".autorun", "autorun", "autorun.sh"] {
+                if let Some(path) = marker(name) {
+                    entries.push(autorun_marker_entry(
+                        options,
+                        &mount,
+                        path,
+                        selected_autorun == Some(name),
+                    ));
                 }
-                let mut entry = AutorunEntry::new(
-                    Category::DeviceMount,
-                    name,
-                    display_location(&path, &options.root),
-                    path.clone(),
-                );
-                entry.status = EntryStatus::Conditional;
-                entry.timestamp = modified_timestamp(&options.root, &path);
-                entry.event = Some("removable media mount and desktop inspection".to_string());
-                entry.mechanism = Some("mounted-media autorun/autoopen evidence".to_string());
-                entry.activating_entity = Some(display_location(&mount, &options.root));
-                let target = in_root_path(&path, &options.root);
-                entry.target = Some(target.display().to_string());
-                if is_executable_file(&options.root, &path) {
-                    entry.command = Some(target.display().to_string());
-                    entry.image_path = Some(target);
+            }
+
+            let selected_autoopen = [".autoopen", "autoopen"]
+                .into_iter()
+                .find(|name| marker(name).is_some());
+            for name in [".autoopen", "autoopen"] {
+                if let Some(path) = marker(name) {
+                    entries.push(autoopen_marker_entry(
+                        options,
+                        &mount,
+                        path,
+                        selected_autoopen == Some(name),
+                        selected_autorun.is_some(),
+                    ));
                 }
-                entry.note = Some("evidence only; media was not mounted or executed".to_string());
-                entry.completeness =
-                    Some("mounted media roots inspected to two levels".to_string());
-                entries.push(entry);
             }
         }
     }
     entries
+}
+
+fn media_entry(options: &Options, mount: &std::path::Path, path: &std::path::Path) -> AutorunEntry {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("media marker");
+    let mut entry = AutorunEntry::new(
+        Category::DeviceMount,
+        name,
+        display_location(path, &options.root),
+        path.to_path_buf(),
+    );
+    entry.timestamp = modified_timestamp(&options.root, path);
+    entry.event = Some("removable media mount and desktop inspection".to_string());
+    entry.activating_entity = Some(display_location(mount, &options.root));
+    entry.completeness = Some("mounted media roots inspected to two levels".to_string());
+    entry
+}
+
+fn autorun_marker_entry(
+    options: &Options,
+    mount: &std::path::Path,
+    path: &std::path::Path,
+    selected: bool,
+) -> AutorunEntry {
+    let mut entry = media_entry(options, mount, path);
+    let target = in_root_path(path, &options.root);
+    entry.target = Some(target.display().to_string());
+    entry.mechanism = Some("mounted-media autorun executable".to_string());
+    if !selected {
+        entry.status = EntryStatus::Shadowed;
+        entry.note = Some("shadowed by a higher-precedence autostart marker".to_string());
+    } else if is_executable_file(&options.root, path) {
+        entry.status = EntryStatus::Conditional;
+        entry.command = Some(target.display().to_string());
+        entry.image_path = Some(target);
+        entry.note = Some(
+            "evidence only; media was not mounted or executed; user confirmation and desktop policy are required"
+                .to_string(),
+        );
+    } else {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("selected autostart marker is not executable".to_string());
+    }
+    entry
+}
+
+fn autoopen_marker_entry(
+    options: &Options,
+    mount: &std::path::Path,
+    path: &std::path::Path,
+    selected: bool,
+    autorun_present: bool,
+) -> AutorunEntry {
+    let mut entry = media_entry(options, mount, path);
+    entry.mechanism = Some("mounted-media autoopen request".to_string());
+    if !selected {
+        entry.status = EntryStatus::Shadowed;
+        entry.note = Some("shadowed by a higher-precedence autoopen marker".to_string());
+        return entry;
+    }
+
+    let Some(content) = read_to_string(&options.root, path) else {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("autoopen marker could not be read".to_string());
+        return entry;
+    };
+    let value = content.split(['\n', '\r']).next().unwrap_or_default();
+    entry.target = Some(value.to_string());
+    let relative = std::path::Path::new(value);
+    if value.is_empty()
+        || relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        entry.status = EntryStatus::Error;
+        entry.note =
+            Some("autoopen target must be a non-empty relative path without '..'".to_string());
+        return entry;
+    }
+
+    let candidate = mount.join(relative);
+    let Some(resolved_mount) = resolve_media_path(&options.root, mount) else {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("mounted-media root could not be resolved".to_string());
+        return entry;
+    };
+    let Some(resolved_target) = resolve_media_path(&options.root, &candidate) else {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("autoopen target could not be resolved".to_string());
+        return entry;
+    };
+    if !resolved_target.starts_with(&resolved_mount) {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("autoopen target resolves outside the mounted-media root".to_string());
+        return entry;
+    }
+
+    let target = in_root_path(&candidate, &options.root);
+    entry.target = Some(target.display().to_string());
+    entry.image_path = Some(target);
+    if !path_is_file(&options.root, &candidate) {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("autoopen target file is missing".to_string());
+    } else if is_executable_file(&options.root, &candidate) {
+        entry.status = EntryStatus::Error;
+        entry.note = Some("autoopen target must be non-executable".to_string());
+    } else {
+        entry.status = EntryStatus::Conditional;
+        entry.note = Some(if autorun_present {
+            "considered only when desktop policy ignores the selected autostart marker".to_string()
+        } else {
+            "user confirmation and desktop policy are required".to_string()
+        });
+    }
+    entry
+}
+
+fn resolve_media_path(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    if root == std::path::Path::new("/") {
+        std::fs::canonicalize(path).ok()
+    } else {
+        resolve_in_root(root, path)
+    }
 }
 
 fn split_quoted(value: &str, separator: char) -> Vec<String> {

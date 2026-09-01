@@ -36,6 +36,60 @@ struct RootAccess {
     fallback_reason: Option<String>,
 }
 
+const MAX_TEXT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ARCHIVE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_ARCHIVE_MEMBERS: usize = 1024;
+const MAX_ARCHIVE_MEMBER_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_ARCHIVE_TOTAL_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+#[derive(Default)]
+pub(crate) struct ArchiveReadBudget {
+    bytes_read: u64,
+}
+
+impl ArchiveReadBudget {
+    pub(crate) fn read_text<R: std::io::Read>(
+        &mut self,
+        reader: &mut R,
+        declared_size: u64,
+    ) -> std::io::Result<String> {
+        if declared_size > MAX_ARCHIVE_MEMBER_BYTES {
+            return Err(limit_error(
+                "archive member",
+                declared_size,
+                MAX_ARCHIVE_MEMBER_BYTES,
+            ));
+        }
+        let declared_total = self.bytes_read.checked_add(declared_size).ok_or_else(|| {
+            limit_error("archive content", u64::MAX, MAX_ARCHIVE_TOTAL_READ_BYTES)
+        })?;
+        if declared_total > MAX_ARCHIVE_TOTAL_READ_BYTES {
+            return Err(limit_error(
+                "archive content",
+                declared_total,
+                MAX_ARCHIVE_TOTAL_READ_BYTES,
+            ));
+        }
+
+        let content = read_limited_string(reader, MAX_ARCHIVE_MEMBER_BYTES)?;
+        let actual_total = self
+            .bytes_read
+            .checked_add(content.len() as u64)
+            .ok_or_else(|| {
+                limit_error("archive content", u64::MAX, MAX_ARCHIVE_TOTAL_READ_BYTES)
+            })?;
+        if actual_total > MAX_ARCHIVE_TOTAL_READ_BYTES {
+            return Err(limit_error(
+                "archive content",
+                actual_total,
+                MAX_ARCHIVE_TOTAL_READ_BYTES,
+            ));
+        }
+        self.bytes_read = actual_total;
+        Ok(content)
+    }
+}
+
 pub fn scan(options: &Options) -> ScanReport {
     DIAGNOSTICS.with(|diagnostics| diagnostics.borrow_mut().clear());
     match initialize_root_access(&options.root) {
@@ -323,14 +377,54 @@ pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> 
             return None;
         }
     };
-    let mut content = String::new();
-    match std::io::Read::read_to_string(&mut file, &mut content) {
-        Ok(_) => Some(content),
+    match read_limited_string(&mut file, MAX_TEXT_FILE_BYTES) {
+        Ok(content) => Some(content),
         Err(error) => {
             record_diagnostic("read", path, error);
             None
         }
     }
+}
+
+fn read_limited_string<R: std::io::Read>(reader: &mut R, limit: u64) -> std::io::Result<String> {
+    let mut bytes = Vec::new();
+    let mut limited = std::io::Read::take(&mut *reader, limit + 1);
+    std::io::Read::read_to_end(&mut limited, &mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(limit_error("text input", bytes.len() as u64, limit));
+    }
+    String::from_utf8(bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn limit_error(kind: &str, actual: u64, limit: u64) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("{kind} size {actual} exceeds {limit}-byte scan limit"),
+    )
+}
+
+pub(crate) fn open_bounded_zip(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> Result<zip::ZipArchive<std::fs::File>, Box<dyn std::error::Error>> {
+    let file = open_file_in_root(root, path)?;
+    let archive_size = file.metadata()?.len();
+    if archive_size > MAX_ARCHIVE_FILE_BYTES {
+        return Err(limit_error("archive file", archive_size, MAX_ARCHIVE_FILE_BYTES).into());
+    }
+    let archive = zip::ZipArchive::new(file)?;
+    if archive.len() > MAX_ARCHIVE_MEMBERS {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "archive member count {} exceeds scan limit {MAX_ARCHIVE_MEMBERS}",
+                archive.len()
+            ),
+        )
+        .into());
+    }
+    Ok(archive)
 }
 
 pub(crate) fn open_file_in_root(

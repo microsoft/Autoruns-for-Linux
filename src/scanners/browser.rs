@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 
 use serde_json::Value;
 
@@ -10,8 +9,8 @@ use crate::{
 
 use super::{
     display_location, first_command_path, in_root_path, list_dirs, list_files, modified_timestamp,
-    open_file_in_root, path_is_dir, path_is_file, read_to_string, record_diagnostic, rooted,
-    shell_tokens, user_homes,
+    open_bounded_zip, path_is_dir, path_is_file, read_to_string, record_diagnostic, rooted,
+    shell_tokens, user_homes, ArchiveReadBudget,
 };
 
 #[derive(Clone, Default)]
@@ -785,11 +784,10 @@ fn xpi_meta(
         return meta.clone();
     }
     let meta = (|| -> Result<ExtensionMeta, Box<dyn std::error::Error>> {
-        let file = open_file_in_root(&options.root, path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        let mut archive = open_bounded_zip(&options.root, path)?;
         let mut manifest = archive.by_name("manifest.json")?;
-        let mut content = String::new();
-        manifest.read_to_string(&mut content)?;
+        let declared_size = manifest.size();
+        let content = ArchiveReadBudget::default().read_text(&mut manifest, declared_size)?;
         let value: Value = serde_json::from_str(&content)?;
         Ok(meta_from_json(&value))
     })()

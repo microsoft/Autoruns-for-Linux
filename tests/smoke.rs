@@ -71,6 +71,23 @@ impl TempRoot {
         archive.finish().expect("finish ZIP fixture");
     }
 
+    fn write_empty_zip_members(&self, relative: &str, member_count: usize) {
+        let full = self.path.join(relative);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).expect("create ZIP fixture parent");
+        }
+        let file = fs::File::create(full).expect("create ZIP fixture");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for index in 0..member_count {
+            archive
+                .start_file(format!("member-{index:04}"), options)
+                .expect("start empty ZIP fixture member");
+        }
+        archive.finish().expect("finish ZIP fixture");
+    }
+
     fn symlink(&self, relative_target: &str, relative_link: &str) {
         let link = self.path.join(relative_link);
         if let Some(parent) = link.parent() {
@@ -389,6 +406,10 @@ fn systemd_preserves_commands_instances_and_scope() {
         "usr/lib/systemd/system/collision.service",
         "etc/systemd/system/multi-user.target.wants/collision.service",
     );
+    root.write(
+        "usr/lib/systemd/system/condition.service",
+        "[Unit]\nExecCondition=/usr/bin/not-a-service-command\n[Service]\nExecCondition=/usr/bin/condition\nExecStart=/usr/bin/condition-start\n",
+    );
     let root_arg = root.path().to_string_lossy().to_string();
 
     let stdout = run(&["-nobanner", "-a", "s", "--root", &root_arg, "-c"]);
@@ -399,6 +420,15 @@ fn systemd_preserves_commands_instances_and_scope() {
         "stdout: {stdout}"
     );
     assert!(stdout.contains("/usr/bin/post"), "stdout: {stdout}");
+    assert!(stdout.contains("/usr/bin/condition"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("/usr/bin/condition-start"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("not-a-service-command"),
+        "stdout: {stdout}"
+    );
     let multi_count = stdout
         .lines()
         .filter(|line| line.contains(",multi.service,"))
@@ -432,7 +462,7 @@ fn systemd_timer_and_path_units_resolve_payloads() {
     let root = TempRoot::new();
     root.write(
         "etc/systemd/system/payload.service",
-        "[Service]\nExecStart=/usr/bin/payload --run\n",
+        "[Service]\nExecCondition=/usr/bin/payload-condition\nExecStartPre=/usr/bin/payload-pre\nExecStart=/usr/bin/payload --run\nExecStartPost=/usr/bin/payload-post\n",
     );
     root.write(
         "etc/systemd/system/schedule.timer",
@@ -446,25 +476,54 @@ fn systemd_timer_and_path_units_resolve_payloads() {
         "etc/systemd/system/watch.path",
         "[Path]\nPathModified=/watched\nUnit=payload.service\n",
     );
+    for (extension, section) in [
+        ("socket", "Socket"),
+        ("device", "Unit"),
+        ("mount", "Mount"),
+        ("automount", "Automount"),
+    ] {
+        root.write(
+            &format!("etc/systemd/system/payload.{extension}"),
+            &format!("[{section}]\n"),
+        );
+    }
     let root_arg = root.path().to_string_lossy().to_string();
 
     let timers = run(&["-nobanner", "-a", "t", "--root", &root_arg, "-c"]);
-    let timer = timers
-        .lines()
-        .find(|line| line.contains(",schedule.timer,"))
-        .expect("timer row");
-    assert!(timer.contains("enabled"), "timer: {timer}");
-    assert!(timer.contains("/usr/bin/payload --run"), "timer: {timer}");
-    assert!(timer.contains("OnCalendar=daily"), "timer: {timer}");
-    assert!(timer.contains("payload.service"), "timer: {timer}");
+    assert_systemd_trigger_phases(&timers, "schedule.timer");
+    assert!(timers.contains("OnCalendar=daily"), "timers: {timers}");
+
+    let services = run(&["-nobanner", "-a", "s", "--root", &root_arg, "-c"]);
+    assert_systemd_trigger_phases(&services, "payload.socket");
 
     let devices = run(&["-nobanner", "-a", "device", "--root", &root_arg, "-c"]);
-    let path = devices
+    assert_systemd_trigger_phases(&devices, "watch.path");
+    assert!(
+        devices.contains("PathModified=/watched"),
+        "devices: {devices}"
+    );
+    for name in ["payload.device", "payload.mount", "payload.automount"] {
+        assert_systemd_trigger_phases(&devices, name);
+    }
+}
+
+fn assert_systemd_trigger_phases(output: &str, name: &str) {
+    let rows: Vec<_> = output
         .lines()
-        .find(|line| line.contains(",watch.path,"))
-        .expect("path row");
-    assert!(path.contains("PathModified=/watched"), "path: {path}");
-    assert!(path.contains("/usr/bin/payload --run"), "path: {path}");
+        .filter(|line| line.contains(&format!(",{name},")))
+        .collect();
+    assert_eq!(rows.len(), 4, "{name} rows: {rows:?}\n{output}");
+    for command in [
+        "/usr/bin/payload-condition",
+        "/usr/bin/payload-pre",
+        "/usr/bin/payload --run",
+        "/usr/bin/payload-post",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.contains(command)),
+            "missing {command} for {name}: {rows:?}"
+        );
+    }
 }
 
 #[test]
@@ -620,6 +679,109 @@ fn device_scanner_reports_effective_static_activation_evidence() {
 }
 
 #[test]
+fn media_markers_apply_precedence_and_validate_autoopen_targets() {
+    let root = TempRoot::new();
+    root.write("media/alice/valid/docs/readme.txt", "read me");
+    root.write("media/alice/valid/docs/other.txt", "other");
+    root.write(
+        "media/alice/valid/.autoopen",
+        "docs/readme.txt\r\nignored.txt",
+    );
+    root.write("media/alice/valid/autoopen", "docs/other.txt\n");
+
+    root.write("media/alice/outside.txt", "outside");
+    root.write("media/alice/traversal/.autoopen", "../outside.txt\n");
+
+    root.write("media/alice/executable/run.sh", "#!/bin/sh\nexit 0\n");
+    root.set_mode("media/alice/executable/run.sh", 0o755);
+    root.write("media/alice/executable/autoopen", "run.sh\n");
+
+    root.write("media/alice/precedence/.autorun", "#!/bin/sh\nexit 0\n");
+    root.write("media/alice/precedence/autorun", "#!/bin/sh\nexit 0\n");
+    root.write("media/alice/precedence/autorun.sh", "#!/bin/sh\nexit 0\n");
+    for marker in [".autorun", "autorun", "autorun.sh"] {
+        root.set_mode(&format!("media/alice/precedence/{marker}"), 0o755);
+    }
+    root.write("media/alice/precedence/document.txt", "document");
+    root.write("media/alice/precedence/.autoopen", "document.txt\n");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "device", "--root", &root_arg, "-c"]);
+
+    let valid = stdout
+        .lines()
+        .find(|line| line.contains(",.autoopen,") && line.contains("/valid/.autoopen"))
+        .expect("effective .autoopen row");
+    assert!(valid.contains(",conditional,"), "row: {valid}");
+    assert!(
+        valid.contains("/media/alice/valid/docs/readme.txt"),
+        "row: {valid}"
+    );
+    assert!(!valid.contains("ignored.txt"), "row: {valid}");
+
+    let lower_autoopen = stdout
+        .lines()
+        .find(|line| line.contains(",autoopen,") && line.contains("/valid/autoopen"))
+        .expect("lower-priority autoopen row");
+    assert!(
+        lower_autoopen.contains(",shadowed,"),
+        "row: {lower_autoopen}"
+    );
+
+    let traversal = stdout
+        .lines()
+        .find(|line| line.contains("/traversal/.autoopen"))
+        .expect("traversal row");
+    assert!(traversal.contains(",error,"), "row: {traversal}");
+    assert!(traversal.contains("without '..'"), "row: {traversal}");
+
+    let executable = stdout
+        .lines()
+        .find(|line| line.contains("/executable/autoopen"))
+        .expect("executable autoopen row");
+    assert!(executable.contains(",error,"), "row: {executable}");
+    assert!(
+        executable.contains("must be non-executable"),
+        "row: {executable}"
+    );
+    assert!(
+        executable.ends_with(",present,true,true"),
+        "row: {executable}"
+    );
+
+    let selected_autorun = stdout
+        .lines()
+        .find(|line| line.contains(",.autorun,") && line.contains("/precedence/.autorun"))
+        .expect("selected autorun row");
+    assert!(
+        selected_autorun.contains(",conditional,"),
+        "row: {selected_autorun}"
+    );
+    for marker in ["autorun", "autorun.sh"] {
+        let row = stdout
+            .lines()
+            .find(|line| {
+                line.contains(&format!(",{marker},"))
+                    && line.contains(&format!("/precedence/{marker}"))
+            })
+            .unwrap_or_else(|| panic!("missing {marker}: {stdout}"));
+        assert!(row.contains(",shadowed,"), "row: {row}");
+    }
+    let conditional_autoopen = stdout
+        .lines()
+        .find(|line| line.contains("/precedence/.autoopen"))
+        .expect("conditional autoopen row");
+    assert!(
+        conditional_autoopen.contains(",conditional,"),
+        "row: {conditional_autoopen}"
+    );
+    assert!(
+        conditional_autoopen.contains("policy ignores the selected autostart marker"),
+        "row: {conditional_autoopen}"
+    );
+}
+
+#[test]
 fn application_scanner_reports_office_extensions_components_and_events() {
     let root = TempRoot::new();
     root.write(
@@ -738,6 +900,73 @@ fn malformed_oxt_is_a_partial_scan() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("parse OXT archive"), "stderr: {stderr}");
     assert!(stderr.contains("broken.oxt"), "stderr: {stderr}");
+}
+
+#[test]
+fn oversized_text_and_archive_inputs_are_bounded() {
+    const MIB: usize = 1024 * 1024;
+
+    let root = TempRoot::new();
+    root.write(
+        "etc/xdg/autostart/oversized.desktop",
+        &"x".repeat(16 * MIB + 1),
+    );
+    root.write(
+        "home/alice/.mozilla/firefox/profiles.ini",
+        "[Profile0]\nName=default\nIsRelative=1\nPath=fixture.default\n",
+    );
+    let oversized_member = vec![b' '; 8 * MIB + 1];
+    root.write_zip(
+        "home/alice/.mozilla/firefox/fixture.default/extensions/oversized.xpi",
+        &[("manifest.json", &oversized_member)],
+    );
+    let cumulative_member = vec![b' '; 8 * MIB];
+    root.write_zip(
+        "usr/lib/libreoffice/share/extensions/cumulative.oxt",
+        &[
+            ("one.Events.xcu", &cumulative_member),
+            ("two.Events.xcu", &cumulative_member),
+            ("three.Events.xcu", &cumulative_member),
+            ("four.Events.xcu", &cumulative_member),
+            ("five.Events.xcu", &cumulative_member),
+        ],
+    );
+    root.write_empty_zip_members(
+        "usr/lib/libreoffice/share/extensions/many-members.oxt",
+        1025,
+    );
+    root.write(
+        "usr/lib/libreoffice/share/extensions/oversized-archive.oxt",
+        "",
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .open(
+            root.path()
+                .join("usr/lib/libreoffice/share/extensions/oversized-archive.oxt"),
+        )
+        .expect("open sparse oversized archive")
+        .set_len((128 * MIB + 1) as u64)
+        .expect("size sparse oversized archive");
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let output = run_output(&["-nobanner", "-a", "*", "--root", &root_arg, "-c"]);
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for (path, diagnostic) in [
+        ("oversized.desktop", "text input size"),
+        ("oversized.xpi", "archive member size"),
+        ("cumulative.oxt", "archive content size"),
+        ("many-members.oxt", "archive member count"),
+        ("oversized-archive.oxt", "archive file size"),
+    ] {
+        assert!(stderr.contains(path), "missing path {path}: {stderr}");
+        assert!(
+            stderr.contains(diagnostic),
+            "missing diagnostic {diagnostic}: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -978,6 +1207,49 @@ fn xdg_user_override_masks_system_entry() {
         wrong_type.contains("Type is not Application"),
         "entry: {wrong_type}"
     );
+}
+
+#[test]
+fn offline_xdg_status_ignores_invoking_session_environment() {
+    let root = TempRoot::new();
+    root.write(
+        "home/alice/.config/autostart/desktop.desktop",
+        "[Desktop Entry]\nType=Application\nName=Offline Desktop\nOnlyShowIn=KDE;\nExec=/usr/bin/desktop-app\n",
+    );
+    root.write(
+        "home/alice/.config/autostart/tryexec.desktop",
+        "[Desktop Entry]\nType=Application\nName=Offline TryExec\nTryExec=profile-helper\nExec=/usr/bin/profile-app\n",
+    );
+    root.write(
+        "home/alice/custom-bin/profile-helper",
+        "#!/bin/sh\nexit 0\n",
+    );
+    root.set_mode("home/alice/custom-bin/profile-helper", 0o755);
+    let root_arg = root.path().to_string_lossy().to_string();
+    let hostile_path = root.path().join("home/alice/custom-bin");
+
+    let output = Command::new(BIN)
+        .args(["-nobanner", "-a", "l", "--root", &root_arg, "-c"])
+        .env("USER", "alice")
+        .env("XDG_CURRENT_DESKTOP", "GNOME")
+        .env("PATH", hostile_path)
+        .output()
+        .expect("run autoruns binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    for name in ["Offline Desktop", "Offline TryExec"] {
+        let row = stdout
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("missing {name}: {stdout}"));
+        assert!(row.contains(",conditional,"), "row: {row}");
+        assert!(!row.contains(",disabled,"), "row: {row}");
+    }
 }
 
 #[test]
@@ -1289,6 +1561,55 @@ fn hashes_in_process_and_ignores_path_helpers() {
 }
 
 #[test]
+fn hash_failures_are_path_specific_partial_scan_diagnostics() {
+    let root = TempRoot::new();
+    root.write(
+        "etc/ld.so.preload",
+        "/opt/unreadable-one /opt/unreadable-two /opt/unreadable-one\n",
+    );
+    root.write("opt/unreadable-one", "one");
+    root.write("opt/unreadable-two", "two");
+    root.set_mode("opt/unreadable-one", 0o000);
+    root.set_mode("opt/unreadable-two", 0o000);
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let output = run_output(&["-nobanner", "-a", "k", "--root", &root_arg, "-h", "--json"]);
+
+    root.set_mode("opt/unreadable-one", 0o600);
+    root.set_mode("opt/unreadable-two", 0o600);
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("hash /opt/unreadable-one").count(),
+        1,
+        "stderr: {stderr}"
+    );
+    assert_eq!(
+        stderr.matches("hash /opt/unreadable-two").count(),
+        1,
+        "stderr: {stderr}"
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON output");
+    for path in ["/opt/unreadable-one", "/opt/unreadable-two"] {
+        let rows: Vec<_> = parsed
+            .as_array()
+            .expect("top-level JSON array")
+            .iter()
+            .filter(|entry| {
+                entry.get("imagePath").and_then(serde_json::Value::as_str) == Some(path)
+            })
+            .collect();
+        assert!(!rows.is_empty(), "missing {path}: {stdout}");
+        assert!(
+            rows.iter().all(|entry| entry["sha256"] == ""),
+            "unexpected hash for {path}: {rows:?}"
+        );
+    }
+}
+
+#[test]
 fn table_escapes_terminal_controls_and_shows_requested_fields() {
     let root = TempRoot::new();
     root.write(
@@ -1332,6 +1653,38 @@ fn output_files_are_owner_only() {
             .mode()
             & 0o777,
         0o600
+    );
+}
+
+#[test]
+fn symlinked_output_destination_is_rejected_without_modifying_target() {
+    let root = TempRoot::new();
+    let root_arg = root.path().to_string_lossy().to_string();
+    root.write("victim", "preserve me");
+    root.set_mode("victim", 0o640);
+    unix_fs::symlink(root.path().join("victim"), root.path().join("report.csv"))
+        .expect("create output symlink");
+    let report_arg = root.path().join("report.csv").to_string_lossy().to_string();
+
+    let output = run_output(&["-nobanner", "--root", &root_arg, "-c", "-o", &report_arg]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to write"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("victim")).unwrap(),
+        "preserve me"
+    );
+    assert_eq!(
+        fs::metadata(root.path().join("victim"))
+            .expect("victim metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
     );
 }
 
