@@ -1,9 +1,10 @@
 [package]
 name = "autoruns"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "List Linux autorun and persistence entries"
 license = "MIT"
+publish = false
 
 [[bin]]
 name = "autoruns"

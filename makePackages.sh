@@ -38,6 +38,8 @@ esac
 
 MANIFEST="$SOURCE_DIR/Cargo.toml"
 [ -f "$MANIFEST" ] || fail "Cargo.toml does not exist: $MANIFEST"
+[ -f "$SOURCE_DIR/LICENSE" ] || fail "LICENSE does not exist: $SOURCE_DIR/LICENSE"
+[ -f "$SOURCE_DIR/THIRD-PARTY-NOTICES.txt" ] || fail "THIRD-PARTY-NOTICES.txt does not exist: $SOURCE_DIR/THIRD-PARTY-NOTICES.txt"
 
 # Read the [package] version with POSIX awk so packaging needs no cargo/python3.
 MANIFEST_VERSION=$(awk '
@@ -109,8 +111,10 @@ case "$PACKAGE_TYPE" in
         [ -f "$CONTROL_TEMPLATE" ] || fail "Debian control template does not exist: $CONTROL_TEMPLATE"
 
         DEB_ROOT="$WORK_DIR/${PACKAGE_NAME}_${PACKAGE_VERSION}_${ARCHITECTURE}"
-        mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/bin"
+        mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/bin" "$DEB_ROOT/usr/share/doc/autoruns"
         install -m 0755 "$BINARY" "$DEB_ROOT/usr/bin/autoruns"
+        install -m 0644 "$SOURCE_DIR/LICENSE" "$DEB_ROOT/usr/share/doc/autoruns/copyright"
+        install -m 0644 "$SOURCE_DIR/THIRD-PARTY-NOTICES.txt" "$DEB_ROOT/usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt"
         sed \
             -e "s/@PACKAGE_VERSION@/$PACKAGE_VERSION/g" \
             -e "s/@ARCHITECTURE@/$ARCHITECTURE/g" \
@@ -132,7 +136,9 @@ case "$PACKAGE_TYPE" in
 
         RPM_ROOT="$WORK_DIR/rpmbuild"
         mkdir -p "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" "$RPM_ROOT/RPMS" "$RPM_ROOT/SOURCES" "$RPM_ROOT/SPECS" "$RPM_ROOT/SRPMS"
-        install -m 0755 "$BINARY" "$RPM_ROOT/BUILD/autoruns"
+        install -m 0755 "$BINARY" "$RPM_ROOT/SOURCES/autoruns"
+        install -m 0644 "$SOURCE_DIR/LICENSE" "$RPM_ROOT/SOURCES/LICENSE"
+        install -m 0644 "$SOURCE_DIR/THIRD-PARTY-NOTICES.txt" "$RPM_ROOT/SOURCES/THIRD-PARTY-NOTICES.txt"
         sed \
             -e "s/@PACKAGE_VERSION@/$PACKAGE_VERSION/g" \
             -e "s/@PACKAGE_RELEASE@/$PACKAGE_RELEASE/g" \

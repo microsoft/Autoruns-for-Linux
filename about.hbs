@@ -1,0 +1,19 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+Autoruns for Linux incorporates third-party software under the licenses listed
+below. The original copyright notices and license terms are reproduced as
+provided by their respective authors. Microsoft does not grant any rights to
+the third-party software except as provided by the applicable licenses.
+
+{{#each licenses}}
+================================================================================
+{{name}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}
