@@ -56,7 +56,9 @@ package test builds the native binary when no build directory is supplied:
 
 The test validates package metadata, architecture, payload, legal files, and
 the packaged executable. Set `AUTORUNS_PACKAGE_INSTALL_TEST=1` to also install,
-run, and remove the native DEB package. RPM validation is required by default.
+run, verify the installed legal files, and remove the host-native package. It
+uses DPKG on Debian/Ubuntu, DNF or YUM on Rocky/RHEL-family systems, and TDNF on
+Azure Linux. RPM metadata and payload validation is required by default.
 
 To validate an existing build or a cross-compiled ARM64 build, pass its binary
 directory and the package architecture names:
@@ -68,7 +70,9 @@ directory and the package architecture names:
 
 Cross-compilation requires the corresponding Rust target, compiler, linker,
 and target system libraries. Release packages must pass validation on native
-AMD64 and ARM64 build hosts; a successful cross-build alone does not establish
+AMD64 and ARM64 build hosts. The release gate runs the install test for the DEB
+on Ubuntu 20.04 and for both RPM variants on Rocky Linux 8 and Azure Linux 3,
+on both architectures. A successful cross-build alone does not establish
 platform support.
 
 See [INSTALL.md](INSTALL.md) for package installation and
