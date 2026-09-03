@@ -69,10 +69,14 @@ DEB_PACKAGE="$BUILD_DIR/autoruns_${VERSION}_${DEB_ARCHITECTURE}.deb"
 [ "$(dpkg-deb --field "$DEB_PACKAGE" Depends)" = "libc6, libgcc-s1" ]
 
 PAYLOAD=$(dpkg-deb --contents "$DEB_PACKAGE" | awk '$1 ~ /^-/ { print $6 }')
-[ "$PAYLOAD" = "./usr/bin/autoruns" ]
+[ "$(printf '%s\n' "$PAYLOAD" | wc -l)" -eq 2 ]
+printf '%s\n' "$PAYLOAD" | grep -qx './usr/bin/autoruns'
+printf '%s\n' "$PAYLOAD" | grep -qx './usr/share/doc/autoruns/copyright'
 
 dpkg-deb --extract "$DEB_PACKAGE" "$EXTRACT_DIR"
 [ "$(stat -c '%a' "$EXTRACT_DIR/usr/bin/autoruns")" = "755" ]
+[ "$(stat -c '%a' "$EXTRACT_DIR/usr/share/doc/autoruns/copyright")" = "644" ]
+cmp LICENSE "$EXTRACT_DIR/usr/share/doc/autoruns/copyright"
 
 case "$(uname -m):$DEB_ARCHITECTURE" in
     x86_64:amd64|aarch64:arm64)
@@ -132,9 +136,17 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     assert_equal "RPM architecture" "$RPM_ARCHITECTURE" "$(rpm -qp --queryformat '%{ARCH}' "$RPM_PACKAGE")"
     assert_equal "RPM license" "MIT" "$(rpm -qp --queryformat '%{LICENSE}' "$RPM_PACKAGE")"
     assert_equal "RPM URL" "https://github.com/microsoft/Autoruns-for-Linux" "$(rpm -qp --queryformat '%{URL}' "$RPM_PACKAGE")"
-    assert_equal "RPM payload" "/usr/bin/autoruns" "$(rpm -qpl "$RPM_PACKAGE")"
+    RPM_PAYLOAD=$(rpm -qpl "$RPM_PACKAGE")
+    [ "$(printf '%s\n' "$RPM_PAYLOAD" | wc -l)" -eq 2 ]
+    printf '%s\n' "$RPM_PAYLOAD" | grep -qx '/usr/bin/autoruns'
+    printf '%s\n' "$RPM_PAYLOAD" | grep -qx '/usr/share/licenses/autoruns/LICENSE'
     if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rwxr-xr-x .* /usr/bin/autoruns$'; then
         echo "RPM executable mode is not 0755" >&2
+        rpm -qplv "$RPM_PACKAGE" >&2
+        exit 1
+    fi
+    if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rw-r--r-- .* /usr/share/licenses/autoruns/LICENSE$'; then
+        echo "RPM legal-file mode is not 0644" >&2
         rpm -qplv "$RPM_PACKAGE" >&2
         exit 1
     fi

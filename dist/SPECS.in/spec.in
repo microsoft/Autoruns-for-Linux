@@ -7,6 +7,8 @@ Summary:        Sysinternals autorun and persistence entry utility
 
 License:        MIT
 URL:            https://github.com/microsoft/Autoruns-for-Linux
+Source0:        autoruns
+Source1:        LICENSE
 
 %description
 Autoruns is a command-line utility that reports programs, scripts, services,
@@ -15,7 +17,9 @@ systems.
 
 %install
 rm -rf %{buildroot}
-install -D -m 0755 autoruns %{buildroot}%{_bindir}/autoruns
+install -D -m 0755 %{SOURCE0} %{buildroot}%{_bindir}/autoruns
+install -D -m 0644 %{SOURCE1} %{buildroot}%{_licensedir}/autoruns/LICENSE
 
 %files
 %{_bindir}/autoruns
+%license %{_licensedir}/autoruns/LICENSE

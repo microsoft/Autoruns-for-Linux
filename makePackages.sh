@@ -109,8 +109,9 @@ case "$PACKAGE_TYPE" in
         [ -f "$CONTROL_TEMPLATE" ] || fail "Debian control template does not exist: $CONTROL_TEMPLATE"
 
         DEB_ROOT="$WORK_DIR/${PACKAGE_NAME}_${PACKAGE_VERSION}_${ARCHITECTURE}"
-        mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/bin"
+        mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/bin" "$DEB_ROOT/usr/share/doc/autoruns"
         install -m 0755 "$BINARY" "$DEB_ROOT/usr/bin/autoruns"
+        install -m 0644 "$SOURCE_DIR/LICENSE" "$DEB_ROOT/usr/share/doc/autoruns/copyright"
         sed \
             -e "s/@PACKAGE_VERSION@/$PACKAGE_VERSION/g" \
             -e "s/@ARCHITECTURE@/$ARCHITECTURE/g" \
@@ -132,7 +133,8 @@ case "$PACKAGE_TYPE" in
 
         RPM_ROOT="$WORK_DIR/rpmbuild"
         mkdir -p "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" "$RPM_ROOT/RPMS" "$RPM_ROOT/SOURCES" "$RPM_ROOT/SPECS" "$RPM_ROOT/SRPMS"
-        install -m 0755 "$BINARY" "$RPM_ROOT/BUILD/autoruns"
+        install -m 0755 "$BINARY" "$RPM_ROOT/SOURCES/autoruns"
+        install -m 0644 "$SOURCE_DIR/LICENSE" "$RPM_ROOT/SOURCES/LICENSE"
         sed \
             -e "s/@PACKAGE_VERSION@/$PACKAGE_VERSION/g" \
             -e "s/@PACKAGE_RELEASE@/$PACKAGE_RELEASE/g" \
