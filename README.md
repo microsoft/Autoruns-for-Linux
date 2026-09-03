@@ -135,6 +135,7 @@ boundaries are reported explicitly rather than mapped inaccurately.
 - [Security](SECURITY.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [MIT License](LICENSE)
+- [Third-party notices](THIRD-PARTY-NOTICES.txt)
 
 ## Trademarks
 

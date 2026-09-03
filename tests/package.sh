@@ -69,14 +69,17 @@ DEB_PACKAGE="$BUILD_DIR/autoruns_${VERSION}_${DEB_ARCHITECTURE}.deb"
 [ "$(dpkg-deb --field "$DEB_PACKAGE" Depends)" = "libc6, libgcc-s1" ]
 
 PAYLOAD=$(dpkg-deb --contents "$DEB_PACKAGE" | awk '$1 ~ /^-/ { print $6 }')
-[ "$(printf '%s\n' "$PAYLOAD" | wc -l)" -eq 2 ]
+[ "$(printf '%s\n' "$PAYLOAD" | wc -l)" -eq 3 ]
 printf '%s\n' "$PAYLOAD" | grep -qx './usr/bin/autoruns'
+printf '%s\n' "$PAYLOAD" | grep -qx './usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt'
 printf '%s\n' "$PAYLOAD" | grep -qx './usr/share/doc/autoruns/copyright'
 
 dpkg-deb --extract "$DEB_PACKAGE" "$EXTRACT_DIR"
 [ "$(stat -c '%a' "$EXTRACT_DIR/usr/bin/autoruns")" = "755" ]
+[ "$(stat -c '%a' "$EXTRACT_DIR/usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt")" = "644" ]
 [ "$(stat -c '%a' "$EXTRACT_DIR/usr/share/doc/autoruns/copyright")" = "644" ]
 cmp LICENSE "$EXTRACT_DIR/usr/share/doc/autoruns/copyright"
+cmp THIRD-PARTY-NOTICES.txt "$EXTRACT_DIR/usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt"
 
 case "$(uname -m):$DEB_ARCHITECTURE" in
     x86_64:amd64|aarch64:arm64)
@@ -90,9 +93,13 @@ case "$(uname -m):$DEB_ARCHITECTURE" in
             sudo dpkg --install "$DEB_PACKAGE"
             DEB_INSTALLED=1
             /usr/bin/autoruns --help | grep -q "Usage: autoruns"
+            [ -f /usr/share/doc/autoruns/copyright ]
+            [ -f /usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt ]
             sudo dpkg --remove autoruns
             DEB_INSTALLED=0
             [ ! -e /usr/bin/autoruns ]
+            [ ! -e /usr/share/doc/autoruns/copyright ]
+            [ ! -e /usr/share/doc/autoruns/THIRD-PARTY-NOTICES.txt ]
         fi
         ;;
 esac
@@ -137,9 +144,10 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     assert_equal "RPM license" "MIT" "$(rpm -qp --queryformat '%{LICENSE}' "$RPM_PACKAGE")"
     assert_equal "RPM URL" "https://github.com/microsoft/Autoruns-for-Linux" "$(rpm -qp --queryformat '%{URL}' "$RPM_PACKAGE")"
     RPM_PAYLOAD=$(rpm -qpl "$RPM_PACKAGE")
-    [ "$(printf '%s\n' "$RPM_PAYLOAD" | wc -l)" -eq 2 ]
+    [ "$(printf '%s\n' "$RPM_PAYLOAD" | wc -l)" -eq 3 ]
     printf '%s\n' "$RPM_PAYLOAD" | grep -qx '/usr/bin/autoruns'
     printf '%s\n' "$RPM_PAYLOAD" | grep -qx '/usr/share/licenses/autoruns/LICENSE'
+    printf '%s\n' "$RPM_PAYLOAD" | grep -qx '/usr/share/licenses/autoruns/THIRD-PARTY-NOTICES.txt'
     if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rwxr-xr-x .* /usr/bin/autoruns$'; then
         echo "RPM executable mode is not 0755" >&2
         rpm -qplv "$RPM_PACKAGE" >&2
@@ -147,6 +155,11 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     fi
     if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rw-r--r-- .* /usr/share/licenses/autoruns/LICENSE$'; then
         echo "RPM legal-file mode is not 0644" >&2
+        rpm -qplv "$RPM_PACKAGE" >&2
+        exit 1
+    fi
+    if ! rpm -qplv "$RPM_PACKAGE" | grep -q '^-rw-r--r-- .* /usr/share/licenses/autoruns/THIRD-PARTY-NOTICES.txt$'; then
+        echo "RPM third-party notice mode is not 0644" >&2
         rpm -qplv "$RPM_PACKAGE" >&2
         exit 1
     fi

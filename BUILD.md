@@ -28,6 +28,22 @@ cargo clippy --all-targets -- -D warnings
 
 The release binary is written to `target/release/autoruns`.
 
+## Third-party notices
+
+`THIRD-PARTY-NOTICES.txt` is generated from the locked Linux dependency graph
+with `cargo-about` 0.9.2. Regenerate it whenever `Cargo.lock`, dependency
+features, `about.toml`, or `about.hbs` changes:
+
+```bash
+cargo install cargo-about --version 0.9.2 --locked --features cli
+cargo about generate about.hbs --locked \
+	--target x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu --fail \
+	-o THIRD-PARTY-NOTICES.txt
+```
+
+Review the generated inventory and obtain the required legal/compliance
+approval before publishing packages.
+
 ## Build packages
 
 Package construction requires `readelf` and the native package tooling:
