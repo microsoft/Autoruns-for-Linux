@@ -1636,6 +1636,9 @@ fn table_escapes_terminal_controls_and_shows_requested_fields() {
         "etc/xdg/autostart/control.desktop",
         "[Desktop Entry]\nName=Safe\u{001b}]52;c;dGVzdA==\u{0007}Name\nExec=/bin/true\n",
     );
+    // The target must exist under the root for -h to produce a hash.
+    root.write("bin/true", "true\n");
+    root.set_mode("bin/true", 0o755);
     let root_arg = root.path().to_string_lossy().to_string();
 
     let output = run_output(&["-nobanner", "-a", "l", "--root", &root_arg, "-h", "-t"]);
