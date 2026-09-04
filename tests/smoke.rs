@@ -185,6 +185,18 @@ fn run_output(args: &[&str]) -> std::process::Output {
         .expect("run autoruns binary")
 }
 
+/// Privileged processes bypass mode bits, so a fixture cannot be made unreadable.
+/// Probe the real behavior rather than assuming a UID, which also covers CAP_DAC_OVERRIDE.
+fn unreadable_fixtures_supported(root: &TempRoot) -> bool {
+    let probe = root.path().join(".permission-probe");
+    root.write(".permission-probe", "probe");
+    root.set_mode(".permission-probe", 0o000);
+    let denied = fs::read(&probe).is_err();
+    root.set_mode(".permission-probe", 0o600);
+    let _ = fs::remove_file(&probe);
+    denied
+}
+
 #[test]
 fn help_lists_usage() {
     let stdout = run(&["--help"]);
@@ -1507,6 +1519,10 @@ fn invalid_roots_fail_instead_of_reporting_an_empty_scan() {
 #[test]
 fn unreadable_sources_produce_partial_scan_status() {
     let root = TempRoot::new();
+    if !unreadable_fixtures_supported(&root) {
+        eprintln!("skipping: privileged process bypasses file permission checks");
+        return;
+    }
     root.write(
         "etc/xdg/autostart/unreadable.desktop",
         "[Desktop Entry]\nName=Unreadable\nExec=/bin/true\n",
@@ -1563,6 +1579,10 @@ fn hashes_in_process_and_ignores_path_helpers() {
 #[test]
 fn hash_failures_are_path_specific_partial_scan_diagnostics() {
     let root = TempRoot::new();
+    if !unreadable_fixtures_supported(&root) {
+        eprintln!("skipping: privileged process bypasses file permission checks");
+        return;
+    }
     root.write(
         "etc/ld.so.preload",
         "/opt/unreadable-one /opt/unreadable-two /opt/unreadable-one\n",
