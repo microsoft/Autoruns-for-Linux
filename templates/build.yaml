@@ -56,8 +56,12 @@ steps:
       fi
 
       cd "${{ parameters.srcPath }}"
-      if command -v rustup >/dev/null 2>&1; then
-          rustup component add rustfmt clippy
+      # Component installation is provider-specific and may already be satisfied;
+      # Microsoft Rust rejects `rustup component add`, so never fail on it.
+      if command -v msrustup >/dev/null 2>&1; then
+          msrustup component add rustfmt clippy || true
+      elif command -v rustup >/dev/null 2>&1; then
+          rustup component add rustfmt clippy || true
       fi
       cargo fmt --version >/dev/null 2>&1 || {
           echo "rustfmt is required; install it through the selected Rust provider." >&2
