@@ -1697,12 +1697,15 @@ fn hash_failures_are_path_specific_partial_scan_diagnostics() {
 }
 
 #[test]
-fn table_escapes_terminal_controls_and_shows_requested_fields() {
+fn default_output_is_indented_safe_and_shows_requested_fields() {
     let root = TempRoot::new();
     root.write(
         "etc/xdg/autostart/control.desktop",
         "[Desktop Entry]\nName=Safe\u{001b}]52;c;dGVzdA==\u{0007}Name\nExec=/bin/true\n",
     );
+    // The target must exist under the root for -h to produce a hash.
+    root.write("bin/true", "true\n");
+    root.set_mode("bin/true", 0o755);
     let root_arg = root.path().to_string_lossy().to_string();
 
     let output = run_output(&["-nobanner", "-a", "l", "--root", &root_arg, "-h", "-t"]);
@@ -1714,8 +1717,28 @@ fn table_escapes_terminal_controls_and_shows_requested_fields() {
     );
     assert!(!output.stdout.contains(&0x1b));
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
-    assert!(stdout.contains("Timestamp"), "stdout: {stdout}");
-    assert!(stdout.contains("SHA256"), "stdout: {stdout}");
+    assert!(
+        stdout.lines().any(|line| line == "Logon"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("   Safe\\u{001b}")),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("     Timestamp")),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.starts_with("     SHA256")),
+        "stdout: {stdout}"
+    );
+    assert!(!stdout.starts_with("Category  Status"), "stdout: {stdout}");
+    assert!(!stdout.contains("     Publisher"), "stdout: {stdout}");
     assert!(stdout.contains("\\u{001b}"), "stdout: {stdout}");
 }
 
