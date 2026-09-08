@@ -316,6 +316,7 @@ pub(crate) fn home_dirs(options: &Options) -> Vec<std::path::PathBuf> {
 pub(crate) struct UserHome {
     pub principal: String,
     pub path: std::path::PathBuf,
+    pub login_enabled: bool,
 }
 
 pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
@@ -324,7 +325,7 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
     if let Some(content) = read_to_string(&options.root, &passwd) {
         for line in content.lines() {
             let fields: Vec<&str> = line.split(':').collect();
-            if fields.len() < 7 || !fields[5].starts_with('/') {
+            if fields.len() < 7 || fields[0].is_empty() || !fields[5].starts_with('/') {
                 continue;
             }
             let path = rooted(options, fields[5]);
@@ -332,6 +333,7 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
                 homes.push(UserHome {
                     principal: fields[0].to_string(),
                     path,
+                    login_enabled: !is_non_login_shell(fields[6]),
                 });
             }
         }
@@ -342,7 +344,11 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        homes.push(UserHome { principal, path });
+        homes.push(UserHome {
+            principal,
+            path,
+            login_enabled: true,
+        });
     }
 
     let root_home = rooted(options, "/root");
@@ -350,6 +356,7 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
         homes.push(UserHome {
             principal: "root".to_string(),
             path: root_home,
+            login_enabled: true,
         });
     }
 
@@ -359,6 +366,7 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
             homes.push(UserHome {
                 principal,
                 path: std::path::PathBuf::from(home),
+                login_enabled: true,
             });
         }
     }
@@ -366,6 +374,15 @@ pub(crate) fn user_homes(options: &Options) -> Vec<UserHome> {
     homes.sort_by(|left, right| left.path.cmp(&right.path));
     homes.dedup_by(|left, right| left.path == right.path);
     homes
+}
+
+fn is_non_login_shell(shell: &str) -> bool {
+    matches!(
+        std::path::Path::new(shell.trim())
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("false" | "nologin" | "sync" | "halt" | "shutdown")
+    )
 }
 
 pub(crate) fn read_to_string(root: &std::path::Path, path: &std::path::Path) -> Option<String> {

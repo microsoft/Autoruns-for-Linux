@@ -22,6 +22,7 @@ name = "autoruns"
 version = "1.0.0"
 dependencies = [
  "glob",
+ "libc",
  "quick-xml",
  "rustix",
  "serde_json",

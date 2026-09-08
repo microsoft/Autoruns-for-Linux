@@ -46,6 +46,13 @@ absolute image paths are checked inside the selected root and reported as
 Registration `Status` remains independent, so an enabled stale entry is still
 shown as enabled with `TargetState=missing`.
 
+Timestamps are displayed as ISO-style local date/time with a numeric UTC offset
+by default, falling back to UTC if local conversion is unavailable; use `-t`
+for normalized UTC (`YYYY-MM-DDTHH:MM:SSZ`). System-wide XDG autostart
+registrations are emitted once with `Principal=all users`, while distinct
+per-user entries and shadowed override evidence retain their principal. Run
+`autoruns --help` for the meaning and derivation of every output field.
+
 Scan an alternate root, useful for tests, mounted systems, containers, and offline images:
 
 ```bash
