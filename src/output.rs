@@ -27,6 +27,9 @@ const HEADERS: [&str; 22] = [
     "TargetExecutable",
 ];
 
+const CATEGORY_INDEX: usize = 0;
+const NAME_INDEX: usize = 2;
+
 pub fn write<W: Write>(
     output: &mut W,
     entries: &[AutorunEntry],
@@ -47,39 +50,42 @@ fn write_table<W: Write>(
     entries: &[AutorunEntry],
     root: &std::path::Path,
 ) -> std::io::Result<()> {
-    let mut widths = HEADERS.map(|header| header.chars().count());
-    for entry in entries {
-        let row = entry_values(entry, root).map(|value| terminal_safe(&value));
-        for (index, cell) in row.iter().enumerate() {
-            widths[index] = widths[index].max(cell.chars().count());
-        }
-    }
+    let label_width = HEADERS
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !is_heading_column(*index))
+        .map(|(_, header)| header.chars().count())
+        .max()
+        .unwrap_or_default();
 
-    write_row(output, &HEADERS, &widths)?;
-    let rules: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
-    write_row(output, &rules, &widths)?;
+    let mut current_category: Option<String> = None;
     for entry in entries {
-        let row = entry_values(entry, root).map(|value| terminal_safe(&value));
-        write_row(output, &row, &widths)?;
+        let values = entry_values(entry, root).map(|value| terminal_safe(&value));
+        let category = &values[CATEGORY_INDEX];
+
+        if current_category.as_deref() != Some(category.as_str()) {
+            if current_category.is_some() {
+                output.write_all(b"\n")?;
+            }
+            writeln!(output, "{category}")?;
+            current_category = Some(category.clone());
+        }
+
+        writeln!(output, "   {}", values[NAME_INDEX])?;
+        for (index, label) in HEADERS.iter().enumerate() {
+            let value = &values[index];
+            if is_heading_column(index) || value.is_empty() {
+                continue;
+            }
+            writeln!(output, "     {label:<label_width$}  {value}")?;
+        }
     }
     Ok(())
 }
 
-fn write_row<W: Write, S: AsRef<str>>(
-    output: &mut W,
-    cells: &[S],
-    widths: &[usize],
-) -> std::io::Result<()> {
-    let last = cells.len() - 1;
-    for (index, cell) in cells.iter().enumerate() {
-        let text = cell.as_ref();
-        output.write_all(text.as_bytes())?;
-        if index != last {
-            let pad = widths[index].saturating_sub(text.chars().count()) + 2;
-            output.write_all(" ".repeat(pad).as_bytes())?;
-        }
-    }
-    output.write_all(b"\n")
+/// Category heads each group and Name heads each entry, so neither repeats in the detail lines.
+fn is_heading_column(index: usize) -> bool {
+    index == CATEGORY_INDEX || index == NAME_INDEX
 }
 
 fn write_delimited<W: Write>(
