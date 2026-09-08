@@ -13,20 +13,19 @@ use super::{
 pub fn scan(options: &Options) -> Vec<AutorunEntry> {
     let mut entries = Vec::new();
     let system_dirs = system_autostart_dirs(options);
-    let users = user_homes(options);
+    scan_scope(options, "all users", None, &system_dirs, &mut entries);
 
-    if users.is_empty() {
-        scan_scope(options, "all users", None, &system_dirs, &mut entries);
-    } else {
-        for user in users {
-            scan_scope(
-                options,
-                &user.principal,
-                Some(user.path.join(".config/autostart")),
-                &system_dirs,
-                &mut entries,
-            );
-        }
+    for user in user_homes(options)
+        .into_iter()
+        .filter(|user| user.login_enabled)
+    {
+        scan_user_scope(
+            options,
+            &user.principal,
+            &user.path.join(".config/autostart"),
+            &system_dirs,
+            &mut entries,
+        );
     }
 
     entries
@@ -76,6 +75,49 @@ fn scan_scope(
                 .unwrap_or(false);
             entries.push(parse_desktop_entry(
                 options, &path, &content, principal, shadowed,
+            ));
+        }
+    }
+}
+
+fn scan_user_scope(
+    options: &Options,
+    principal: &str,
+    user_dir: &std::path::Path,
+    system_dirs: &[std::path::PathBuf],
+    entries: &mut Vec<AutorunEntry>,
+) {
+    let mut overridden_names = HashSet::new();
+    for path in list_files(&options.root, user_dir) {
+        if path.extension().and_then(|value| value.to_str()) != Some("desktop") {
+            continue;
+        }
+        let Some(content) = read_to_string(&options.root, &path) else {
+            continue;
+        };
+        if let Some(name) = path.file_name() {
+            overridden_names.insert(name.to_os_string());
+        }
+        entries.push(parse_desktop_entry(
+            options, &path, &content, principal, false,
+        ));
+    }
+
+    for dir in system_dirs {
+        for path in list_files(&options.root, dir) {
+            if path.extension().and_then(|value| value.to_str()) != Some("desktop")
+                || !path
+                    .file_name()
+                    .map(|name| overridden_names.contains(name))
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+            let Some(content) = read_to_string(&options.root, &path) else {
+                continue;
+            };
+            entries.push(parse_desktop_entry(
+                options, &path, &content, principal, true,
             ));
         }
     }

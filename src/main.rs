@@ -47,11 +47,13 @@ fn main() -> ExitCode {
         add_hashes(&options, &mut entries, &mut diagnostics);
     }
 
-    if options.utc_timestamps {
-        for entry in &mut entries {
-            if let Some(timestamp) = entry.timestamp.take() {
-                entry.timestamp = Some(format_utc_timestamp(&timestamp));
-            }
+    for entry in &mut entries {
+        if let Some(timestamp) = entry.timestamp.take() {
+            entry.timestamp = Some(if options.utc_timestamps {
+                format_utc_timestamp(&timestamp)
+            } else {
+                format_local_timestamp(&timestamp)
+            });
         }
     }
 
@@ -168,8 +170,39 @@ fn add_hashes(
     }
 }
 
-// Renders an epoch-seconds timestamp as an ISO-8601 UTC string for `-t`.
-// Non-numeric values are returned unchanged.
+#[cfg(unix)]
+fn format_local_timestamp(epoch: &str) -> String {
+    let seconds: libc::time_t = match epoch.parse() {
+        Ok(value) => value,
+        Err(_) => return epoch.to_string(),
+    };
+    let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // localtime_r initializes the caller-owned tm value and is thread-safe.
+    if unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null() {
+        return format_utc_timestamp(epoch);
+    }
+    let local = unsafe { local.assume_init() };
+    let mut buffer = [0u8; 64];
+    let format = b"%Y-%m-%dT%H:%M:%S%z\0";
+    let length = unsafe {
+        libc::strftime(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            format.as_ptr().cast(),
+            &local,
+        )
+    };
+    if length == 0 {
+        return format_utc_timestamp(epoch);
+    }
+    String::from_utf8_lossy(&buffer[..length]).into_owned()
+}
+
+#[cfg(not(unix))]
+fn format_local_timestamp(epoch: &str) -> String {
+    format_utc_timestamp(epoch)
+}
+
 fn format_utc_timestamp(epoch: &str) -> String {
     let seconds: i64 = match epoch.parse() {
         Ok(value) => value,

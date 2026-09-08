@@ -1197,12 +1197,23 @@ fn xdg_user_override_masks_system_entry() {
     assert!(user.contains("disabled"), "user entry: {user}");
     assert!(user.contains(",alice,"), "user entry: {user}");
 
-    let system = stdout
+    let system_rows: Vec<_> = stdout
         .lines()
-        .find(|line| line.contains("System App"))
-        .expect("shadowed system entry");
-    assert!(system.contains("shadowed"), "system entry: {system}");
-    assert!(!system.contains(",enabled,"), "system entry: {system}");
+        .filter(|line| line.contains("System App"))
+        .collect();
+    assert_eq!(system_rows.len(), 2, "system entries: {stdout}");
+    assert!(
+        system_rows
+            .iter()
+            .any(|line| line.contains(",enabled,") && line.contains(",all users,")),
+        "global system entry: {system_rows:?}"
+    );
+    assert!(
+        system_rows
+            .iter()
+            .any(|line| line.contains(",shadowed,") && line.contains(",alice,")),
+        "shadowed system entry: {system_rows:?}"
+    );
 
     let try_exec = stdout
         .lines()
@@ -1219,6 +1230,62 @@ fn xdg_user_override_masks_system_entry() {
         wrong_type.contains("Type is not Application"),
         "entry: {wrong_type}"
     );
+}
+
+#[test]
+fn xdg_entries_ignore_non_login_accounts() {
+    let root = TempRoot::new();
+    root.write(
+        "etc/passwd",
+        "service:x:2:2:service:/home/service:/usr/sbin/nologin\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\nbob:x:1001:1001:Bob:/home/bob:/bin/sh\n",
+    );
+    root.write(
+        "home/service/.config/autostart/service.desktop",
+        "[Desktop Entry]\nName=Service Account App\nExec=/usr/bin/service-app\n",
+    );
+    root.write("home/alice/.keep", "");
+    root.write("home/bob/.keep", "");
+    root.write(
+        "etc/xdg/autostart/system.desktop",
+        "[Desktop Entry]\nType=Application\nName=System Login App\nExec=/usr/bin/system-login-app\n",
+    );
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "l", "--root", &root_arg, "-c"]);
+    let rows: Vec<_> = stdout
+        .lines()
+        .filter(|line| line.contains(",System Login App,"))
+        .collect();
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "non-login accounts duplicated XDG rows: {stdout}"
+    );
+    assert!(rows[0].contains(",all users,"), "row: {}", rows[0]);
+    assert!(!stdout.contains("Service Account App"), "stdout: {stdout}");
+}
+
+#[test]
+fn non_login_accounts_remain_visible_to_systemd_scanning() {
+    let root = TempRoot::new();
+    root.write(
+        "etc/passwd",
+        "service:x:2:2:service:/home/service:/usr/sbin/nologin\n",
+    );
+    root.write(
+        "home/service/.config/systemd/user/service-account.service",
+        "[Service]\nExecStart=/usr/bin/service-account-worker\n",
+    );
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let stdout = run(&["-nobanner", "-a", "s", "--root", &root_arg, "-c"]);
+    let row = stdout
+        .lines()
+        .find(|line| line.contains(",service-account.service,"))
+        .unwrap_or_else(|| panic!("missing service-account unit: {stdout}"));
+
+    assert!(row.contains(",service,"), "row: {row}");
 }
 
 #[test]
@@ -1650,6 +1717,55 @@ fn table_escapes_terminal_controls_and_shows_requested_fields() {
     assert!(stdout.contains("Timestamp"), "stdout: {stdout}");
     assert!(stdout.contains("SHA256"), "stdout: {stdout}");
     assert!(stdout.contains("\\u{001b}"), "stdout: {stdout}");
+}
+
+#[test]
+fn timestamps_are_readable_by_default_and_utc_with_t() {
+    let root = TempRoot::new();
+    root.write(
+        "etc/xdg/autostart/timestamp.desktop",
+        "[Desktop Entry]\nName=Timestamp App\nExec=/bin/true\n",
+    );
+    let root_arg = root.path().to_string_lossy().to_string();
+
+    let timestamp = |extra: &[&str]| {
+        let mut args = vec![
+            "-nobanner",
+            "-a",
+            "l",
+            "--root",
+            root_arg.as_str(),
+            "--json",
+        ];
+        args.extend_from_slice(extra);
+        let stdout = run(&args);
+        let entries: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+        entries
+            .as_array()
+            .expect("entry array")
+            .iter()
+            .find(|entry| entry["name"] == "Timestamp App")
+            .and_then(|entry| entry["timestamp"].as_str())
+            .expect("timestamp")
+            .to_string()
+    };
+
+    let local = timestamp(&[]);
+    assert!(
+        local.contains('T') && local.contains(':'),
+        "timestamp: {local}"
+    );
+    assert!(
+        local.ends_with("+0000")
+            || local
+                .rsplit_once(['+', '-'])
+                .map(|(_, offset)| offset.len() == 4 && offset.chars().all(|ch| ch.is_ascii_digit()))
+                .unwrap_or(false),
+        "timestamp lacks UTC offset: {local}"
+    );
+
+    let utc = timestamp(&["-t"]);
+    assert!(utc.contains('T') && utc.ends_with('Z'), "timestamp: {utc}");
 }
 
 #[test]
